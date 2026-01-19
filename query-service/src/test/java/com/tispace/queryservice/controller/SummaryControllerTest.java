@@ -92,5 +92,80 @@ class SummaryControllerTest {
 			.andExpect(jsonPath("$.summary").value("Generated summary"))
 			.andExpect(jsonPath("$.cached").value(false));
 	}
+	
+	@Test
+	void testGetArticleSummary_InvalidJson_ReturnsBadRequest() throws Exception {
+		mockMvc.perform(post("/internal/summary/1")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("invalid json"))
+			.andExpect(status().isBadRequest());
+	}
+	
+	@Test
+	void testGetArticleSummary_MissingContentType_ReturnsBadRequest() throws Exception {
+		mockMvc.perform(post("/internal/summary/1")
+				.content(objectMapper.writeValueAsString(mockArticleDTO)))
+			.andExpect(status().isBadRequest());
+	}
+	
+	@Test
+	void testGetArticleSummary_ServiceThrowsException_ReturnsError() throws Exception {
+		when(articleSummaryService.getSummary(eq(1L), any(ArticleDTO.class)))
+			.thenThrow(new RuntimeException("Service error"));
+		
+		mockMvc.perform(post("/internal/summary/1")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(mockArticleDTO)))
+			.andExpect(status().isInternalServerError());
+	}
+	
+	@Test
+	void testGetArticleSummary_DifferentArticleId_UsesCorrectId() throws Exception {
+		SummaryDTO summary = SummaryDTO.builder()
+			.articleId(999L)
+			.summary("Summary")
+			.cached(true)
+			.build();
+		
+		when(articleSummaryService.getSummary(eq(999L), any(ArticleDTO.class))).thenReturn(summary);
+		
+		mockMvc.perform(post("/internal/summary/999")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content(objectMapper.writeValueAsString(mockArticleDTO)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.articleId").value(999));
+	}
+	
+	@Test
+	void testGetArticleSummary_NullArticleDTO_HandlesGracefully() throws Exception {
+		SummaryDTO summary = SummaryDTO.builder()
+			.articleId(1L)
+			.summary("Summary")
+			.cached(true)
+			.build();
+		
+		when(articleSummaryService.getSummary(eq(1L), any())).thenReturn(summary);
+		
+		mockMvc.perform(post("/internal/summary/1")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("null"))
+			.andExpect(status().isOk());
+	}
+	
+	@Test
+	void testGetArticleSummary_EmptyBody_HandlesGracefully() throws Exception {
+		SummaryDTO summary = SummaryDTO.builder()
+			.articleId(1L)
+			.summary("Summary")
+			.cached(true)
+			.build();
+		
+		when(articleSummaryService.getSummary(eq(1L), any())).thenReturn(summary);
+		
+		mockMvc.perform(post("/internal/summary/1")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{}"))
+			.andExpect(status().isOk());
+	}
 }
 

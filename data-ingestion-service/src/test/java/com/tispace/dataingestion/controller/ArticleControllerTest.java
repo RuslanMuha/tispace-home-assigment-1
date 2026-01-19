@@ -120,5 +120,103 @@ class ArticleControllerTest {
 				.contentType(MediaType.APPLICATION_JSON))
 			.andExpect(status().isNotFound());
 	}
+	
+	@Test
+	void testGetArticles_EmptyPage_ReturnsEmptyPage() throws Exception {
+		Page<ArticleDTO> emptyPage = new PageImpl<>(new ArrayList<>(), PageRequest.of(0, 20), 0);
+		
+		when(articleQueryService.getArticlesDTO(any(Pageable.class), any())).thenReturn(emptyPage);
+		
+		mockMvc.perform(get("/api/articles")
+				.param("page", "0")
+				.param("size", "20")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content").isArray())
+			.andExpect(jsonPath("$.content").isEmpty());
+	}
+	
+	@Test
+	void testGetArticles_WithEmptyCategory_ReturnsAllArticles() throws Exception {
+		List<ArticleDTO> articles = new ArrayList<>();
+		articles.add(mockArticleDTO);
+		Page<ArticleDTO> page = new PageImpl<>(articles, PageRequest.of(0, 20), 1);
+		
+		when(articleQueryService.getArticlesDTO(any(Pageable.class), eq(""))).thenReturn(page);
+		
+		mockMvc.perform(get("/api/articles")
+				.param("page", "0")
+				.param("size", "20")
+				.param("category", "")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content").isArray());
+	}
+	
+	@Test
+	void testGetArticles_ServiceThrowsException_ReturnsError() throws Exception {
+		when(articleQueryService.getArticlesDTO(any(Pageable.class), any()))
+			.thenThrow(new RuntimeException("Service error"));
+		
+		mockMvc.perform(get("/api/articles")
+				.param("page", "0")
+				.param("size", "20")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isInternalServerError());
+	}
+	
+	@Test
+	void testGetArticleById_ServiceThrowsException_ReturnsError() throws Exception {
+		when(articleQueryService.getArticleDTOById(1L))
+			.thenThrow(new RuntimeException("Service error"));
+		
+		mockMvc.perform(get("/api/articles/1")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isInternalServerError());
+	}
+	
+	@Test
+	void testGetArticles_InvalidPageNumber_ReturnsBadRequest() throws Exception {
+		// Spring validates pageable parameters and returns 400 for invalid values
+		mockMvc.perform(get("/api/articles")
+				.param("page", "-1")
+				.param("size", "20")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isBadRequest());
+	}
+	
+	@Test
+	void testGetArticles_InvalidSize_ReturnsBadRequest() throws Exception {
+		// Spring validates pageable parameters and returns 400 for invalid values
+		mockMvc.perform(get("/api/articles")
+				.param("page", "0")
+				.param("size", "0")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isBadRequest());
+	}
+	
+	@Test
+	void testGetArticles_NoPaginationParams_UsesDefaults() throws Exception {
+		List<ArticleDTO> articles = new ArrayList<>();
+		articles.add(mockArticleDTO);
+		Page<ArticleDTO> page = new PageImpl<>(articles, PageRequest.of(0, 20), 1);
+		
+		when(articleQueryService.getArticlesDTO(any(Pageable.class), any())).thenReturn(page);
+		
+		mockMvc.perform(get("/api/articles")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.content").isArray());
+	}
+	
+	@Test
+	void testGetArticleById_InvalidId_HandlesGracefully() throws Exception {
+		when(articleQueryService.getArticleDTOById(999L))
+			.thenThrow(new NotFoundException("Article", 999L));
+		
+		mockMvc.perform(get("/api/articles/999")
+				.contentType(MediaType.APPLICATION_JSON))
+			.andExpect(status().isNotFound());
+	}
 }
 

@@ -142,6 +142,101 @@ class ArticleQueryServiceTest {
 		assertEquals("Test Article", result.getTitle());
 		verify(articleMapper, times(1)).toDTO(any(Article.class));
 	}
+	
+	@Test
+	void testGetArticleDTOById_NotExists_ThrowsException() {
+		when(articleRepository.findById(1L)).thenReturn(Optional.empty());
+		
+		assertThrows(NotFoundException.class, () -> articleQueryService.getArticleDTOById(1L));
+		verify(articleRepository, times(1)).findById(1L);
+		verify(articleMapper, never()).toDTO(any(Article.class));
+	}
+	
+	@Test
+	void testGetArticles_WithEmptyCategory_ReturnsAllArticles() {
+		Pageable pageable = PageRequest.of(0, 20);
+		Page<Article> page = new PageImpl<>(mockArticles, pageable, 1);
+		
+		when(articleRepository.findAll(any(Pageable.class))).thenReturn(page);
+		
+		Page<Article> result = articleQueryService.getArticles(pageable, "");
+		
+		assertNotNull(result);
+		assertEquals(1, result.getContent().size());
+		verify(articleRepository, times(1)).findAll(pageable);
+		verify(articleRepository, never()).findByCategory(anyString(), any(Pageable.class));
+	}
+	
+	@Test
+	void testGetArticles_WithWhitespaceCategory_FiltersByWhitespaceCategory() {
+		// Note: StringUtils.isNotEmpty("   ") returns true, so whitespace is treated as valid category
+		Pageable pageable = PageRequest.of(0, 20);
+		Page<Article> page = new PageImpl<>(mockArticles, pageable, 1);
+		
+		when(articleRepository.findByCategory(anyString(), any(Pageable.class))).thenReturn(page);
+		
+		Page<Article> result = articleQueryService.getArticles(pageable, "   ");
+		
+		assertNotNull(result);
+		assertEquals(1, result.getContent().size());
+		verify(articleRepository, times(1)).findByCategory("   ", pageable);
+		verify(articleRepository, never()).findAll(any(Pageable.class));
+	}
+	
+	@Test
+	void testGetArticlesDTO_WithoutCategory_ReturnsAllDTOs() {
+		Pageable pageable = PageRequest.of(0, 20);
+		Page<Article> articlePage = new PageImpl<>(mockArticles, pageable, 1);
+		
+		when(articleRepository.findAll(any(Pageable.class))).thenReturn(articlePage);
+		when(articleMapper.toDTO(any(Article.class))).thenReturn(mockArticleDTO);
+		
+		Page<ArticleDTO> result = articleQueryService.getArticlesDTO(pageable, null);
+		
+		assertNotNull(result);
+		assertEquals(1, result.getContent().size());
+		verify(articleMapper, times(1)).toDTO(any(Article.class));
+		verify(articleRepository, times(1)).findAll(pageable);
+	}
+	
+	@Test
+	void testGetArticlesDTO_WithEmptyCategory_ReturnsAllDTOs() {
+		Pageable pageable = PageRequest.of(0, 20);
+		Page<Article> articlePage = new PageImpl<>(mockArticles, pageable, 1);
+		
+		when(articleRepository.findAll(any(Pageable.class))).thenReturn(articlePage);
+		when(articleMapper.toDTO(any(Article.class))).thenReturn(mockArticleDTO);
+		
+		Page<ArticleDTO> result = articleQueryService.getArticlesDTO(pageable, "");
+		
+		assertNotNull(result);
+		assertEquals(1, result.getContent().size());
+		verify(articleMapper, times(1)).toDTO(any(Article.class));
+		verify(articleRepository, times(1)).findAll(pageable);
+	}
+	
+	@Test
+	void testGetArticles_EmptyPage_ReturnsEmptyPage() {
+		Pageable pageable = PageRequest.of(0, 20);
+		Page<Article> emptyPage = new PageImpl<>(new ArrayList<>(), pageable, 0);
+		
+		when(articleRepository.findAll(any(Pageable.class))).thenReturn(emptyPage);
+		
+		Page<Article> result = articleQueryService.getArticles(pageable, null);
+		
+		assertNotNull(result);
+		assertTrue(result.isEmpty());
+		assertEquals(0, result.getContent().size());
+	}
+	
+	@Test
+	void testGetArticleById_NullId_ThrowsNotFoundException() {
+		// Repository.findById(null) returns Optional.empty(), which triggers NotFoundException
+		when(articleRepository.findById(null)).thenReturn(java.util.Optional.empty());
+		
+		assertThrows(NotFoundException.class, () -> articleQueryService.getArticleById(null));
+		verify(articleRepository, times(1)).findById(null);
+	}
 }
 
 

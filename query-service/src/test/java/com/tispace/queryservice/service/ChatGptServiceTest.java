@@ -128,6 +128,121 @@ class ChatGptServiceTest {
 		verify(openAiService, times(1)).createChatCompletion(any(ChatCompletionRequest.class));
 	}
 	
+	@Test
+	void testGenerateSummary_EmptyChoices_ThrowsException() {
+		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
+		when(mockResult.getChoices()).thenReturn(new ArrayList<>());
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		assertThrows(RuntimeException.class, () -> chatGptService.generateSummary(mockArticleDTO));
+	}
+	
+	@Test
+	void testGenerateSummary_NullChoices_ThrowsException() {
+		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
+		when(mockResult.getChoices()).thenReturn(null);
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		assertThrows(NullPointerException.class, () -> chatGptService.generateSummary(mockArticleDTO));
+	}
+	
+	@Test
+	void testGenerateSummary_NullMessage_ThrowsException() {
+		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
+		com.theokanning.openai.completion.chat.ChatCompletionChoice choice = 
+			mock(com.theokanning.openai.completion.chat.ChatCompletionChoice.class);
+		
+		List<com.theokanning.openai.completion.chat.ChatCompletionChoice> choices = new ArrayList<>();
+		choices.add(choice);
+		
+		when(mockResult.getChoices()).thenReturn(choices);
+		when(choice.getMessage()).thenReturn(null);
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		assertThrows(NullPointerException.class, () -> chatGptService.generateSummary(mockArticleDTO));
+	}
+	
+	@Test
+	void testGenerateSummary_EmptyContent_ReturnsEmptyString() {
+		ChatCompletionResult mockResult = createMockChatCompletionResult("");
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		String result = chatGptService.generateSummary(mockArticleDTO);
+		
+		assertNotNull(result);
+		assertEquals("", result);
+	}
+	
+	@Test
+	void testGenerateSummary_NullContent_ReturnsNull() {
+		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
+		com.theokanning.openai.completion.chat.ChatCompletionChoice choice = 
+			mock(com.theokanning.openai.completion.chat.ChatCompletionChoice.class);
+		ChatMessage message = new ChatMessage("assistant", null);
+		
+		List<com.theokanning.openai.completion.chat.ChatCompletionChoice> choices = new ArrayList<>();
+		choices.add(choice);
+		
+		when(mockResult.getChoices()).thenReturn(choices);
+		when(choice.getMessage()).thenReturn(message);
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		String result = chatGptService.generateSummary(mockArticleDTO);
+		
+		assertNull(result);
+	}
+	
+	@Test
+	void testGenerateSummary_WithEmptyTitle_StillGeneratesSummary() {
+		ArticleDTO articleWithEmptyTitle = ArticleDTO.builder()
+			.id(3L)
+			.title("")
+			.description("Test Description")
+			.author("Test Author")
+			.publishedAt(LocalDateTime.now())
+			.category("technology")
+			.build();
+		
+		String expectedSummary = "Summary with empty title";
+		ChatCompletionResult mockResult = createMockChatCompletionResult(expectedSummary);
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		String result = chatGptService.generateSummary(articleWithEmptyTitle);
+		
+		assertNotNull(result);
+		assertEquals(expectedSummary, result);
+		verify(openAiService, times(1)).createChatCompletion(any(ChatCompletionRequest.class));
+	}
+	
+	@Test
+	void testGenerateSummary_WithEmptyDescription_ExcludesDescription() {
+		ArticleDTO articleWithEmptyDescription = ArticleDTO.builder()
+			.id(4L)
+			.title("Test Article")
+			.description("")
+			.author("Test Author")
+			.publishedAt(LocalDateTime.now())
+			.category("technology")
+			.build();
+		
+		String expectedSummary = "Summary";
+		ChatCompletionResult mockResult = createMockChatCompletionResult(expectedSummary);
+		
+		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
+		
+		String result = chatGptService.generateSummary(articleWithEmptyDescription);
+		
+		assertNotNull(result);
+		assertEquals(expectedSummary, result);
+		verify(openAiService, times(1)).createChatCompletion(any(ChatCompletionRequest.class));
+	}
+	
 	private ChatCompletionResult createMockChatCompletionResult(String content) {
 		ChatCompletionResult result = mock(ChatCompletionResult.class);
 		com.theokanning.openai.completion.chat.ChatCompletionChoice choice = 
