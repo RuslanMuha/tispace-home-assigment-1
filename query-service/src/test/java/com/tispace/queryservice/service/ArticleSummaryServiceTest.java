@@ -25,6 +25,9 @@ class ArticleSummaryServiceTest {
 	@Mock
 	private ChatGptService chatGptService;
 	
+	@Mock
+	private SingleFlightExecutor singleFlightExecutor;
+	
 	@InjectMocks
 	private ArticleSummaryService articleSummaryService;
 	
@@ -65,10 +68,14 @@ class ArticleSummaryServiceTest {
 	}
 	
 	@Test
-	void testGetSummary_NotInCache_GeneratesNewSummary() {
+	void testGetSummary_NotInCache_GeneratesNewSummary() throws Exception {
 		String generatedSummary = "Generated summary by ChatGPT";
 		
 		when(cacheService.get(anyString(), eq(SummaryDTO.class))).thenReturn(null);
+		when(singleFlightExecutor.execute(anyString(), eq(SummaryDTO.class), any())).thenAnswer(invocation -> {
+			SingleFlightExecutor.SingleFlightOperation<SummaryDTO> operation = invocation.getArgument(2);
+			return operation.execute();
+		});
 		when(chatGptService.generateSummary(mockArticleDTO)).thenReturn(generatedSummary);
 		
 		SummaryDTO result = articleSummaryService.getSummary(ARTICLE_ID, mockArticleDTO);
@@ -78,18 +85,23 @@ class ArticleSummaryServiceTest {
 		assertEquals(ARTICLE_ID, result.getArticleId());
 		assertEquals(generatedSummary, result.getSummary());
 		
-		verify(cacheService, times(1)).get(anyString(), eq(SummaryDTO.class));
+		verify(cacheService, atLeast(1)).get(anyString(), eq(SummaryDTO.class));
 		verify(chatGptService, times(1)).generateSummary(mockArticleDTO);
 		verify(cacheService, times(1)).put(anyString(), any(SummaryDTO.class), eq(86400L)); // 24 hours * 60 * 60 = 86400 seconds
+		verify(singleFlightExecutor, times(1)).execute(anyString(), eq(SummaryDTO.class), any());
 	}
 	
 	@Test
-	void testGetSummary_CacheThrowsException_StillGeneratesSummary() {
+	void testGetSummary_CacheThrowsException_StillGeneratesSummary() throws Exception {
 		// CacheService handles exceptions gracefully and returns null (cache miss)
 		// So this test should actually generate summary when cache returns null
 		String generatedSummary = "Generated summary by ChatGPT";
 		
 		when(cacheService.get(anyString(), eq(SummaryDTO.class))).thenReturn(null);
+		when(singleFlightExecutor.execute(anyString(), eq(SummaryDTO.class), any())).thenAnswer(invocation -> {
+			SingleFlightExecutor.SingleFlightOperation<SummaryDTO> operation = invocation.getArgument(2);
+			return operation.execute();
+		});
 		when(chatGptService.generateSummary(mockArticleDTO)).thenReturn(generatedSummary);
 		
 		SummaryDTO result = articleSummaryService.getSummary(ARTICLE_ID, mockArticleDTO);
@@ -97,58 +109,81 @@ class ArticleSummaryServiceTest {
 		assertNotNull(result);
 		assertFalse(result.getCached());
 		assertEquals(generatedSummary, result.getSummary());
-		verify(cacheService, times(1)).get(anyString(), eq(SummaryDTO.class));
+		verify(cacheService, atLeast(1)).get(anyString(), eq(SummaryDTO.class));
 		verify(chatGptService, times(1)).generateSummary(mockArticleDTO);
+		verify(singleFlightExecutor, times(1)).execute(anyString(), eq(SummaryDTO.class), any());
 	}
 	
 	@Test
-	void testGetSummary_ChatGptThrowsException_PropagatesException() {
+	void testGetSummary_ChatGptThrowsException_PropagatesException() throws Exception {
 		when(cacheService.get(anyString(), eq(SummaryDTO.class))).thenReturn(null);
+		// Mock singleFlightExecutor to throw exception, which triggers fallback
+		when(singleFlightExecutor.execute(anyString(), eq(SummaryDTO.class), any()))
+			.thenThrow(new RuntimeException("Single flight error"));
 		when(chatGptService.generateSummary(mockArticleDTO))
 			.thenThrow(new RuntimeException("ChatGPT error"));
 		
 		assertThrows(RuntimeException.class, 
 			() -> articleSummaryService.getSummary(ARTICLE_ID, mockArticleDTO));
 		
-		verify(cacheService, times(1)).get(anyString(), eq(SummaryDTO.class));
-		verify(chatGptService, times(1)).generateSummary(mockArticleDTO);
+		// First check in getSummary() + fallback calls generateAndCacheSummary which calls ChatGPT
+		verify(cacheService, atLeast(1)).get(anyString(), eq(SummaryDTO.class));
+		// When singleFlightExecutor throws, fallback calls generateAndCacheSummary which calls ChatGPT
+		verify(chatGptService, atLeast(1)).generateSummary(mockArticleDTO);
 		verify(cacheService, never()).put(anyString(), any(SummaryDTO.class), anyLong());
+		verify(singleFlightExecutor, times(1)).execute(anyString(), eq(SummaryDTO.class), any());
 	}
 	
 	@Test
-	void testGetSummary_CachePutThrowsException_StillReturnsSummary() {
-		// CacheService handles exceptions gracefully, but ArticleSummaryService wraps in try-catch
-		// So cache put errors are handled and summary is still returned
+	void testGetSummary_CachePutThrowsException_StillReturnsSummary() throws Exception {
+		// CacheService.put() fails silently, so even if it throws, summary should still be returned
 		String generatedSummary = "Generated summary by ChatGPT";
 		
 		when(cacheService.get(anyString(), eq(SummaryDTO.class))).thenReturn(null);
+		when(singleFlightExecutor.execute(anyString(), eq(SummaryDTO.class), any())).thenAnswer(invocation -> {
+			SingleFlightExecutor.SingleFlightOperation<SummaryDTO> operation = invocation.getArgument(2);
+			try {
+				return operation.execute();
+			} catch (Exception e) {
+				// If cache.put throws, it should be caught in generateAndCacheSummary
+				// and summary should still be returned
+				throw e;
+			}
+		});
 		when(chatGptService.generateSummary(mockArticleDTO)).thenReturn(generatedSummary);
 		doThrow(new RuntimeException("Cache put error"))
 			.when(cacheService).put(anyString(), any(SummaryDTO.class), anyLong());
 		
-		// Cache put errors are caught and summary is still returned
+		// Cache put errors are caught in cacheSummary() method and summary is still returned
 		SummaryDTO result = articleSummaryService.getSummary(ARTICLE_ID, mockArticleDTO);
 		
 		assertNotNull(result);
 		assertFalse(result.getCached());
 		assertEquals(generatedSummary, result.getSummary());
-		verify(cacheService, times(1)).get(anyString(), eq(SummaryDTO.class));
+		verify(cacheService, atLeast(1)).get(anyString(), eq(SummaryDTO.class));
 		verify(chatGptService, times(1)).generateSummary(mockArticleDTO);
 		verify(cacheService, times(1)).put(anyString(), any(SummaryDTO.class), eq(86400L));
+		verify(singleFlightExecutor, times(1)).execute(anyString(), eq(SummaryDTO.class), any());
 	}
 	
 	@Test
-	void testGetSummary_DifferentTtlHours_CalculatesCorrectly() {
+	void testGetSummary_DifferentTtlHours_CalculatesCorrectly() throws Exception {
 		ReflectionTestUtils.setField(articleSummaryService, "cacheTtlHours", 12);
 		
 		String generatedSummary = "Generated summary";
 		
 		when(cacheService.get(anyString(), eq(SummaryDTO.class))).thenReturn(null);
+		when(singleFlightExecutor.execute(anyString(), eq(SummaryDTO.class), any())).thenAnswer(invocation -> {
+			SingleFlightExecutor.SingleFlightOperation<SummaryDTO> operation = invocation.getArgument(2);
+			return operation.execute();
+		});
 		when(chatGptService.generateSummary(mockArticleDTO)).thenReturn(generatedSummary);
 		
 		articleSummaryService.getSummary(ARTICLE_ID, mockArticleDTO);
 		
+		verify(cacheService, atLeast(1)).get(anyString(), eq(SummaryDTO.class));
 		verify(cacheService, times(1)).put(anyString(), any(SummaryDTO.class), eq(43200L)); // 12 hours * 60 * 60 = 43200 seconds
+		verify(singleFlightExecutor, times(1)).execute(anyString(), eq(SummaryDTO.class), any());
 	}
 	
 	@Test

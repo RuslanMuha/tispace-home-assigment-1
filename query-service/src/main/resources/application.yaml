@@ -8,12 +8,14 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
-      timeout: 2000ms
+      timeout: 2000ms  # Connection timeout
+      command-timeout: 1000ms  # Command timeout
       lettuce:
         pool:
           max-active: 8
           max-idle: 8
           min-idle: 0
+          max-wait: 1000ms
 
 openai:
   api-key: ${OPENAI_API_KEY:}
@@ -37,6 +39,25 @@ resilience4j:
         failureRateThreshold: 50
         slowCallRateThreshold: 100
         slowCallDurationThreshold: 10s
+      redis:
+        registerHealthIndicator: true
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        permittedNumberOfCallsInHalfOpenState: 3
+        automaticTransitionFromOpenToHalfOpenEnabled: true
+        waitDurationInOpenState: 30s
+        failureRateThreshold: 50
+        slowCallRateThreshold: 100
+        slowCallDurationThreshold: 2s  # Если Redis медленнее 2s - считаем slow call
+        recordExceptions:
+          - org.springframework.data.redis.RedisConnectionFailureException
+          - io.lettuce.core.RedisException
+          - java.util.concurrent.TimeoutException
+  bulkhead:
+    instances:
+      redis:
+        max-concurrent-calls: 20
+        max-wait-duration: 1s
   retry:
     instances:
       openAiApi:
@@ -47,6 +68,11 @@ resilience4j:
         retryExceptions:
           - java.net.SocketTimeoutException
           - java.util.concurrent.TimeoutException
+      redis:
+        maxAttempts: 2
+        waitDuration: 100ms
+        retryExceptions:
+          - org.springframework.data.redis.RedisConnectionFailureException
 
 server:
   port: 8082
@@ -58,7 +84,11 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
   endpoint:
     health:
       probes:

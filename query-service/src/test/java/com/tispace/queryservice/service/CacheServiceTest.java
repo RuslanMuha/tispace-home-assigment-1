@@ -1,10 +1,11 @@
 package com.tispace.queryservice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -12,8 +13,10 @@ import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.concurrent.TimeUnit;
 
+import org.mockito.ArgumentCaptor;
+
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -25,14 +28,21 @@ class CacheServiceTest {
 	@Mock
 	private ObjectMapper objectMapper;
 	
+	private MeterRegistry meterRegistry;
+	
 	@Mock
 	private ValueOperations<String, String> valueOperations;
 	
-	@InjectMocks
 	private CacheService cacheService;
 	
 	@BeforeEach
 	void setUp() {
+		// Use real SimpleMeterRegistry instead of mock to avoid initialization issues
+		meterRegistry = new SimpleMeterRegistry();
+		
+		// Create CacheService with real MeterRegistry
+		cacheService = new CacheService(redisTemplate, objectMapper, meterRegistry);
+		
 		// Set up mock that's used in most tests, but make it lenient for tests that don't need it
 		lenient().when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 	}
@@ -74,10 +84,17 @@ class CacheServiceTest {
 		
 		when(objectMapper.writeValueAsString(value)).thenReturn(jsonValue);
 		
+		ArgumentCaptor<Long> ttlCaptor = ArgumentCaptor.forClass(Long.class);
+		
 		cacheService.put(key, value, 3600);
 		
 		verify(objectMapper, times(1)).writeValueAsString(value);
-		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
+		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), ttlCaptor.capture(), eq(TimeUnit.SECONDS));
+		
+		// TTL has jitter applied (±10%), so we check that it's in the expected range (3240-3960)
+		Long actualTtl = ttlCaptor.getValue();
+		assertTrue(actualTtl >= 3240L && actualTtl <= 3960L, 
+			"TTL should be in range 3240-3960 (3600 ±10%), but was: " + actualTtl);
 	}
 	
 	@Test
@@ -142,14 +159,22 @@ class CacheServiceTest {
 		String jsonValue = "{\"id\":1,\"name\":\"test\"}";
 		
 		when(objectMapper.writeValueAsString(value)).thenReturn(jsonValue);
+		
+		ArgumentCaptor<Long> ttlCaptor = ArgumentCaptor.forClass(Long.class);
+		// TTL has jitter applied (±10%), so we capture the actual value
 		doThrow(new RuntimeException("Redis connection error"))
-			.when(valueOperations).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
+			.when(valueOperations).set(eq(key), eq(jsonValue), ttlCaptor.capture(), eq(TimeUnit.SECONDS));
 		
 		// Should not throw exception - fails silently
 		cacheService.put(key, value, 3600);
 		
 		verify(objectMapper, times(1)).writeValueAsString(value);
-		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
+		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), anyLong(), eq(TimeUnit.SECONDS));
+		
+		// TTL has jitter applied (±10%), so we check that it's in the expected range (3240-3960)
+		Long actualTtl = ttlCaptor.getValue();
+		assertTrue(actualTtl >= 3240L && actualTtl <= 3960L, 
+			"TTL should be in range 3240-3960 (3600 ±10%), but was: " + actualTtl);
 	}
 	
 	@Test
