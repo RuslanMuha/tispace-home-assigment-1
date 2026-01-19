@@ -138,8 +138,7 @@ public class ArticleController {
 	@GetMapping("/{id}/summary")
 	@Operation(
 		summary = "Get AI-generated article summary",
-		description = "Retrieves an AI-generated summary of an article using ChatGPT. The summary is cached for 24 hours. " +
-			"First request generates the summary, subsequent requests return the cached version."
+		description = "Retrieves an AI-generated summary of an article using ChatGPT. The summary is cached for 24 hours. First request generates the summary, subsequent requests return the cached version."
 	)
 	@ApiResponses(value = {
 		@ApiResponse(

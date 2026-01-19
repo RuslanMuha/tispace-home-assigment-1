@@ -44,13 +44,13 @@ public class NewsApiClient implements ExternalApiClient {
 			ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 			
 			if (!response.getStatusCode().is2xxSuccessful()) {
-				throw new ExternalApiException("NewsAPI returned status: " + response.getStatusCode());
+				throw new ExternalApiException(String.format("NewsAPI returned status: %s", response.getStatusCode()));
 			}
 			
 			NewsApiAdapter adapter = objectMapper.readValue(response.getBody(), NewsApiAdapter.class);
 			
 			if (!NewsApiConstants.STATUS_OK.equalsIgnoreCase(adapter.getStatus())) {
-				throw new ExternalApiException("NewsAPI returned status: " + adapter.getStatus());
+				throw new ExternalApiException(String.format("NewsAPI returned status: %s", adapter.getStatus()));
 			}
 			
 			return mapToArticles(adapter, category);
@@ -59,7 +59,7 @@ public class NewsApiClient implements ExternalApiClient {
 			throw e;
 		} catch (Exception e) {
 			log.error("Error fetching articles from NewsAPI", e);
-			throw new ExternalApiException("Failed to fetch articles from NewsAPI: " + e.getMessage(), e);
+			throw new ExternalApiException(String.format("Failed to fetch articles from NewsAPI: %s", e.getMessage()), e);
 		}
 	}
 	

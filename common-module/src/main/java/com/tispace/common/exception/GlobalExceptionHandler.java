@@ -46,8 +46,8 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<ErrorResponseDTO> handleValidationException(MethodArgumentNotValidException ex, WebRequest request) {
 		log.error("Validation error: {}", ex.getMessage());
 		String message = ex.getBindingResult().getFieldErrors().stream()
-			.map(error -> error.getField() + ": " + error.getDefaultMessage())
-			.reduce((a, b) -> a + ", " + b)
+			.map(error -> String.format("%s: %s", error.getField(), error.getDefaultMessage()))
+			.reduce((a, b) -> String.format("%s, %s", a, b))
 			.orElse(VALIDATION_FAILED_MESSAGE);
 		
 		return buildErrorResponse("VALIDATION_ERROR", message, HttpStatus.BAD_REQUEST, request);

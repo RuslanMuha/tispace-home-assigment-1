@@ -28,7 +28,7 @@ public class QueryServiceClient {
 	
 	public SummaryDTO getArticleSummary(Long articleId, ArticleDTO article) {
 		try {
-			String url = queryServiceUrl + SUMMARY_ENDPOINT + "/" + articleId;
+			String url = String.format("%s%s/%d", queryServiceUrl, SUMMARY_ENDPOINT, articleId);
 			
 			HttpEntity<ArticleDTO> request = new HttpEntity<>(article);
 			ResponseEntity<SummaryDTO> response = restTemplate.exchange(
@@ -47,10 +47,10 @@ public class QueryServiceClient {
 			
 		} catch (HttpClientErrorException e) {
 			log.error("Error calling query-service for summary: {}", e.getMessage());
-			throw new ExternalApiException("Query service error: " + e.getMessage(), e);
+			throw new ExternalApiException(String.format("Query service error: %s", e.getMessage()), e);
 		} catch (Exception e) {
 			log.error("Unexpected error calling query-service", e);
-			throw new ExternalApiException("Failed to get summary: " + e.getMessage(), e);
+			throw new ExternalApiException(String.format("Failed to get summary: %s", e.getMessage()), e);
 		}
 	}
 }

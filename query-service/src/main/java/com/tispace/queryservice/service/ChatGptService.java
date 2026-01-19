@@ -62,7 +62,7 @@ public class ChatGptService {
 			
 		} catch (Exception e) {
 			log.error("Error generating summary for article id: {}", article.getId(), e);
-			throw new ExternalApiException("Failed to generate summary: " + e.getMessage(), e);
+			throw new ExternalApiException(String.format("Failed to generate summary: %s", e.getMessage()), e);
 		}
 	}
 	
@@ -73,7 +73,7 @@ public class ChatGptService {
 		if (article.getDescription() != null && !article.getDescription().isEmpty()) {
 			// Extract first sentence or first 150 characters from description
 			String descriptionPreview = article.getDescription().length() > 150 
-				? article.getDescription().substring(0, 150) + "..."
+				? String.format("%s...", article.getDescription().substring(0, 150))
 				: article.getDescription();
 			mockSummary.append(" ").append(descriptionPreview);
 		}
