@@ -139,17 +139,21 @@ class ChatGptServiceTest {
 	}
 	
 	@Test
-	void testGenerateSummary_NullChoices_ThrowsException() {
+	void testGenerateSummary_NullChoices_ThrowsExternalApiException() {
 		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
 		when(mockResult.getChoices()).thenReturn(null);
 		
 		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
 		
-		assertThrows(NullPointerException.class, () -> chatGptService.generateSummary(mockArticleDTO));
+		com.tispace.common.exception.ExternalApiException exception = assertThrows(
+			com.tispace.common.exception.ExternalApiException.class, 
+			() -> chatGptService.generateSummary(mockArticleDTO));
+		
+		assertTrue(exception.getMessage().contains("no choices"));
 	}
 	
 	@Test
-	void testGenerateSummary_NullMessage_ThrowsException() {
+	void testGenerateSummary_NullMessage_ThrowsExternalApiException() {
 		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
 		com.theokanning.openai.completion.chat.ChatCompletionChoice choice = 
 			mock(com.theokanning.openai.completion.chat.ChatCompletionChoice.class);
@@ -162,23 +166,28 @@ class ChatGptServiceTest {
 		
 		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
 		
-		assertThrows(NullPointerException.class, () -> chatGptService.generateSummary(mockArticleDTO));
+		com.tispace.common.exception.ExternalApiException exception = assertThrows(
+			com.tispace.common.exception.ExternalApiException.class, 
+			() -> chatGptService.generateSummary(mockArticleDTO));
+		
+		assertTrue(exception.getMessage().contains("invalid response structure"));
 	}
 	
 	@Test
-	void testGenerateSummary_EmptyContent_ReturnsEmptyString() {
+	void testGenerateSummary_EmptyContent_ThrowsExternalApiException() {
 		ChatCompletionResult mockResult = createMockChatCompletionResult("");
 		
 		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
 		
-		String result = chatGptService.generateSummary(mockArticleDTO);
+		com.tispace.common.exception.ExternalApiException exception = assertThrows(
+			com.tispace.common.exception.ExternalApiException.class, 
+			() -> chatGptService.generateSummary(mockArticleDTO));
 		
-		assertNotNull(result);
-		assertEquals("", result);
+		assertTrue(exception.getMessage().contains("empty summary content"));
 	}
 	
 	@Test
-	void testGenerateSummary_NullContent_ReturnsNull() {
+	void testGenerateSummary_NullContent_ThrowsExternalApiException() {
 		ChatCompletionResult mockResult = mock(ChatCompletionResult.class);
 		com.theokanning.openai.completion.chat.ChatCompletionChoice choice = 
 			mock(com.theokanning.openai.completion.chat.ChatCompletionChoice.class);
@@ -192,9 +201,11 @@ class ChatGptServiceTest {
 		
 		when(openAiService.createChatCompletion(any(ChatCompletionRequest.class))).thenReturn(mockResult);
 		
-		String result = chatGptService.generateSummary(mockArticleDTO);
+		com.tispace.common.exception.ExternalApiException exception = assertThrows(
+			com.tispace.common.exception.ExternalApiException.class, 
+			() -> chatGptService.generateSummary(mockArticleDTO));
 		
-		assertNull(result);
+		assertTrue(exception.getMessage().contains("empty summary content"));
 	}
 	
 	@Test

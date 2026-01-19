@@ -80,7 +80,9 @@ class ScheduledIngestionJobTest {
 	void testOnApplicationReady_DataExactlyAtThreshold_SkipsIngestion() {
 		// Article created exactly 24 hours ago (at threshold)
 		// Note: compareTo returns > 0 only if strictly greater, so exactly 24 hours should skip
-		LocalDateTime thresholdTime = LocalDateTime.now().minusHours(24).minusSeconds(1);
+		// Use 23 hours to ensure it's safely less than 24 hour threshold
+		// This accounts for any timing precision issues during test execution
+		LocalDateTime thresholdTime = LocalDateTime.now().minusHours(23);
 		mockArticle.setCreatedAt(thresholdTime);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));

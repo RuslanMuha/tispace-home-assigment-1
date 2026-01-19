@@ -90,49 +90,53 @@ class CacheServiceTest {
 	}
 	
 	@Test
-	void testGet_DeserializationException_ThrowsException() throws Exception {
+	void testGet_DeserializationException_ReturnsNull() throws Exception {
+		// CacheService handles exceptions gracefully and returns null (cache miss)
 		String key = "test:key";
 		String jsonValue = "invalid json";
 		
 		when(valueOperations.get(key)).thenReturn(jsonValue);
 		when(objectMapper.readValue(jsonValue, TestObject.class))
-			.thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("Parse error") {});
+			.thenThrow(new com.fasterxml.jackson.databind.JsonMappingException(null, "Parse error"));
 		
-		assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class, 
-			() -> cacheService.get(key, TestObject.class));
+		TestObject result = cacheService.get(key, TestObject.class);
 		
+		assertNull(result); // Exceptions are handled and return null
 		verify(valueOperations, times(1)).get(key);
-		verify(objectMapper, times(1)).readValue(jsonValue, TestObject.class);
 	}
 	
 	@Test
-	void testPut_SerializationException_ThrowsException() throws Exception {
+	void testPut_SerializationException_FailsSilently() throws Exception {
+		// CacheService handles exceptions gracefully and fails silently
 		String key = "test:key";
 		TestObject value = new TestObject(1L, "test");
 		
 		when(objectMapper.writeValueAsString(value))
-			.thenThrow(new com.fasterxml.jackson.core.JsonProcessingException("Serialize error") {});
+			.thenThrow(new com.fasterxml.jackson.databind.JsonMappingException(null, "Serialize error"));
 		
-		assertThrows(com.fasterxml.jackson.core.JsonProcessingException.class, 
-			() -> cacheService.put(key, value, 3600));
+		// Should not throw exception - fails silently
+		cacheService.put(key, value, 3600);
 		
 		verify(objectMapper, times(1)).writeValueAsString(value);
 		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 	}
 	
 	@Test
-	void testGet_RedisThrowsException_PropagatesException() {
+	void testGet_RedisThrowsException_ReturnsNull() {
+		// CacheService handles exceptions gracefully and returns null (cache miss)
 		String key = "test:key";
 		
 		when(valueOperations.get(key)).thenThrow(new RuntimeException("Redis connection error"));
 		
-		assertThrows(RuntimeException.class, () -> cacheService.get(key, TestObject.class));
+		TestObject result = cacheService.get(key, TestObject.class);
 		
+		assertNull(result); // Exceptions are handled and return null
 		verify(valueOperations, times(1)).get(key);
 	}
 	
 	@Test
-	void testPut_RedisThrowsException_PropagatesException() throws Exception {
+	void testPut_RedisThrowsException_FailsSilently() throws Exception {
+		// CacheService handles exceptions gracefully and fails silently
 		String key = "test:key";
 		TestObject value = new TestObject(1L, "test");
 		String jsonValue = "{\"id\":1,\"name\":\"test\"}";
@@ -141,19 +145,22 @@ class CacheServiceTest {
 		doThrow(new RuntimeException("Redis connection error"))
 			.when(valueOperations).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
 		
-		assertThrows(RuntimeException.class, () -> cacheService.put(key, value, 3600));
+		// Should not throw exception - fails silently
+		cacheService.put(key, value, 3600);
 		
 		verify(objectMapper, times(1)).writeValueAsString(value);
 		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
 	}
 	
 	@Test
-	void testDelete_RedisThrowsException_PropagatesException() {
+	void testDelete_RedisThrowsException_FailsSilently() {
+		// CacheService handles exceptions gracefully and fails silently
 		String key = "test:key";
 		
 		doThrow(new RuntimeException("Redis connection error")).when(redisTemplate).delete(key);
 		
-		assertThrows(RuntimeException.class, () -> cacheService.delete(key));
+		// Should not throw exception - fails silently
+		cacheService.delete(key);
 		
 		verify(redisTemplate, times(1)).delete(key);
 	}
@@ -174,55 +181,61 @@ class CacheServiceTest {
 	}
 	
 	@Test
-	void testPut_ZeroTtl_StillCaches() throws Exception {
+	void testPut_ZeroTtl_SkipsCaching() throws Exception {
+		// CacheService skips caching when TTL <= 0
 		String key = "test:key";
 		TestObject value = new TestObject(1L, "test");
-		String jsonValue = "{\"id\":1,\"name\":\"test\"}";
-		
-		when(objectMapper.writeValueAsString(value)).thenReturn(jsonValue);
 		
 		cacheService.put(key, value, 0);
 		
-		verify(objectMapper, times(1)).writeValueAsString(value);
-		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(0L), eq(TimeUnit.SECONDS));
+		// Should not call objectMapper or valueOperations when TTL is invalid
+		verify(objectMapper, never()).writeValueAsString(any());
+		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 	}
 	
 	@Test
-	void testPut_NegativeTtl_StillCaches() throws Exception {
+	void testPut_NegativeTtl_SkipsCaching() throws Exception {
+		// CacheService skips caching when TTL <= 0
 		String key = "test:key";
 		TestObject value = new TestObject(1L, "test");
-		String jsonValue = "{\"id\":1,\"name\":\"test\"}";
-		
-		when(objectMapper.writeValueAsString(value)).thenReturn(jsonValue);
 		
 		cacheService.put(key, value, -1);
 		
-		verify(objectMapper, times(1)).writeValueAsString(value);
-		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(-1L), eq(TimeUnit.SECONDS));
+		// Should not call objectMapper or valueOperations when TTL is invalid
+		verify(objectMapper, never()).writeValueAsString(any());
+		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 	}
 	
 	@Test
-	void testGet_NullKey_ThrowsException() {
-		assertThrows(Exception.class, () -> cacheService.get(null, TestObject.class));
-	}
-	
-	@Test
-	void testPut_NullKey_ThrowsException() {
-		TestObject value = new TestObject(1L, "test");
-		assertThrows(Exception.class, () -> cacheService.put(null, value, 3600));
-	}
-	
-	@Test
-	void testPut_NullValue_HandlesGracefully() throws Exception {
-		String key = "test:key";
-		String jsonValue = "null";
+	void testGet_NullKey_ReturnsNull() throws Exception {
+		// CacheService handles null key gracefully and returns null
+		TestObject result = cacheService.get(null, TestObject.class);
 		
-		when(objectMapper.writeValueAsString(null)).thenReturn(jsonValue);
+		assertNull(result);
+		verify(valueOperations, never()).get(anyString());
+	}
+	
+	@Test
+	void testPut_NullKey_FailsSilently() throws Exception {
+		// CacheService handles null key gracefully and fails silently
+		TestObject value = new TestObject(1L, "test");
+		
+		cacheService.put(null, value, 3600);
+		
+		verify(objectMapper, never()).writeValueAsString(any());
+		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+	}
+	
+	@Test
+	void testPut_NullValue_SkipsCaching() throws Exception {
+		// CacheService skips caching when value is null
+		String key = "test:key";
 		
 		cacheService.put(key, null, 3600);
 		
-		verify(objectMapper, times(1)).writeValueAsString(null);
-		verify(valueOperations, times(1)).set(eq(key), eq(jsonValue), eq(3600L), eq(TimeUnit.SECONDS));
+		// Should not call objectMapper or valueOperations when value is null
+		verify(objectMapper, never()).writeValueAsString(any());
+		verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
 	}
 	
 	// Helper class for testing
