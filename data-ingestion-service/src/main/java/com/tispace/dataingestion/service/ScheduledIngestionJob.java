@@ -55,7 +55,8 @@ public class ScheduledIngestionJob {
 		}
 	}
 	
-	@Scheduled(cron = "${scheduler.cron:0 0 */6 * * *}", zone = "UTC")
+//	@Scheduled(cron = "${scheduler.cron:0 0 */6 * * *}", zone = "UTC")
+    @Scheduled(cron = "0 */2 * * * *", zone = "UTC")
 	public void scheduledDataIngestion() {
 		log.info("Attempting to acquire distributed lock for scheduled data ingestion job");
 		

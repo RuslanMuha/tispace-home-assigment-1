@@ -25,7 +25,7 @@ public class SummaryController {
 	private final ArticleSummaryService articleSummaryService;
 	
 	@PostMapping("/{articleId}")
-	public ResponseEntity<SummaryDTO> getArticleSummary(
+	public ResponseEntity<SummaryDTO> generateOrGetSummary(
 		@PathVariable
 		@NotNull(message = "Article ID is required")
 		@Positive(message = "Article ID must be a positive number")
@@ -34,17 +34,9 @@ public class SummaryController {
 		@Valid
 		@NotNull(message = "Article body is required")
 		ArticleDTO article) {
-		
-		// Validate that article ID in path matches article ID in body (if present)
-		if (article.getId() != null && !article.getId().equals(articleId)) {
-			log.warn("Article ID mismatch: path={}, body={}", articleId, article.getId());
-			throw new BusinessException(String.format("Article ID in path (%d) does not match ID in body (%d)", 
-				articleId, article.getId()));
-		}
-		
+
 		log.debug("Fetching summary for article with id: {}", articleId);
-		
-		SummaryDTO summary = articleSummaryService.getSummary(articleId, article);
+		var summary = articleSummaryService.getSummary(articleId, article);
 		return ResponseEntity.ok(summary);
 	}
 }

@@ -1,14 +1,14 @@
 package com.tispace.dataingestion.repository;
 
 import com.tispace.common.entity.Article;
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.BatchPreparedStatementSetter;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.Timestamp;
+import java.sql.*;
 import java.util.List;
 
 /**
@@ -19,76 +19,56 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class ArticleBatchRepository {
-	
-	private final EntityManager entityManager;
-	
-	private static final String BATCH_INSERT_SQL = 
-		"INSERT INTO articles (title, description, author, published_at, category, created_at, updated_at) " +
-		"VALUES (:title, :description, :author, :publishedAt, :category, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) " +
-		"ON CONFLICT (title) DO NOTHING";
-	
-	/**
-	 * Batch inserts articles using PostgreSQL ON CONFLICT DO NOTHING.
-	 * This is more efficient than individual inserts and handles duplicates at DB level.
-	 * 
-	 * @param articles List of articles to insert
-	 * @return Number of rows actually inserted (excluding duplicates)
-	 */
-	@Transactional
-	public int batchInsertIgnoreDuplicates(List<Article> articles) {
-		if (articles == null || articles.isEmpty()) {
-			return 0;
-		}
-		
-		int insertedCount = 0;
-		final int batchSize = 50; // Process in batches to avoid memory issues
-		
-		// Process in batches
-		for (int i = 0; i < articles.size(); i += batchSize) {
-			int end = Math.min(i + batchSize, articles.size());
-			List<Article> batch = articles.subList(i, end);
-			
-			int batchInserted = insertBatch(batch);
-			insertedCount += batchInserted;
-			
-			// Clear persistence context to free memory
-			entityManager.clear();
-		}
-		
-		return insertedCount;
-	}
-	
-	/**
-	 * Inserts a batch of articles using native query.
-	 */
-	private int insertBatch(List<Article> batch) {
-		int insertedCount = 0;
-		
-		for (Article article : batch) {
-			Query query = entityManager.createNativeQuery(BATCH_INSERT_SQL);
-			query.setParameter("title", article.getTitle());
-			query.setParameter("description", article.getDescription());
-			query.setParameter("author", article.getAuthor());
-			
-			if (article.getPublishedAt() != null) {
-				query.setParameter("publishedAt", Timestamp.valueOf(article.getPublishedAt()));
-			} else {
-				query.setParameter("publishedAt", null);
-			}
-			
-			query.setParameter("category", article.getCategory());
-			
-			try {
-				int rowsAffected = query.executeUpdate();
-				if (rowsAffected > 0) {
-					insertedCount++;
-				}
-			} catch (Exception e) {
-				// ON CONFLICT DO NOTHING should prevent exceptions, but log if something unexpected happens
-				log.debug("Article with title '{}' was skipped (likely duplicate)", article.getTitle());
-			}
-		}
-		
-		return insertedCount;
-	}
+
+    private static final String INSERT_SQL =
+            "INSERT INTO articles (title, description, author, published_at, category, created_at, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) " +
+                    "ON CONFLICT (title) DO NOTHING";
+
+    private final JdbcTemplate jdbcTemplate;
+
+    @Transactional
+    public int batchInsertIgnoreDuplicates(List<Article> articles) {
+        if (articles == null || articles.isEmpty()) {
+            return 0;
+        }
+
+        final int batchSize = 50;
+        int insertedTotal = 0;
+
+        for (int i = 0; i < articles.size(); i += batchSize) {
+            int end = Math.min(i + batchSize, articles.size());
+            List<Article> batch = articles.subList(i, end);
+
+            int[] results = jdbcTemplate.batchUpdate(INSERT_SQL, new BatchPreparedStatementSetter() {
+                @Override
+                public void setValues(PreparedStatement ps, int idx) throws SQLException {
+                    Article a = batch.get(idx);
+                    ps.setString(1, a.getTitle());
+                    ps.setString(2, a.getDescription());
+                    ps.setString(3, a.getAuthor());
+
+                    if (a.getPublishedAt() != null) {
+                        ps.setTimestamp(4, Timestamp.valueOf(a.getPublishedAt()));
+                    } else {
+                        ps.setTimestamp(4, null);
+                    }
+
+                    ps.setString(5, a.getCategory());
+                }
+
+                @Override
+                public int getBatchSize() {
+                    return batch.size();
+                }
+            });
+
+            // count only actual inserts (0 = duplicate skipped)
+            for (int r : results) {
+                if (r > 0) insertedTotal += r;
+            }
+        }
+
+        return insertedTotal;
+    }
 }

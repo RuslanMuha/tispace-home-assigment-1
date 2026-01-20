@@ -5,6 +5,7 @@ import com.theokanning.openai.completion.chat.ChatCompletionResult;
 import com.theokanning.openai.completion.chat.ChatMessage;
 import com.theokanning.openai.service.OpenAiService;
 import com.tispace.common.dto.ArticleDTO;
+import com.tispace.common.validation.ArticleValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +31,9 @@ class ChatGptServiceTest {
 	@Mock
 	private ObjectProvider<OpenAiService> openAiServiceProvider;
 	
+	@Mock
+	private ArticleValidator articleValidator;
+	
 	private ChatGptService chatGptService;
 	
 	private ArticleDTO mockArticleDTO;
@@ -37,7 +41,7 @@ class ChatGptServiceTest {
 	@BeforeEach
 	void setUp() {
 		when(openAiServiceProvider.getIfAvailable()).thenReturn(openAiService);
-		chatGptService = new ChatGptService(openAiServiceProvider);
+		chatGptService = new ChatGptService(openAiServiceProvider, articleValidator);
 		ReflectionTestUtils.setField(chatGptService, "model", "gpt-3.5-turbo");
 		
 		mockArticleDTO = ArticleDTO.builder()
@@ -55,7 +59,7 @@ class ChatGptServiceTest {
 	void testGenerateSummary_OpenAiServiceNull_ReturnsMockSummary() {
 		ObjectProvider<OpenAiService> nullProvider = mock(ObjectProvider.class);
 		when(nullProvider.getIfAvailable()).thenReturn(null);
-		ChatGptService service = new ChatGptService(nullProvider);
+		ChatGptService service = new ChatGptService(nullProvider, articleValidator);
 		ReflectionTestUtils.setField(service, "model", "gpt-3.5-turbo");
 		
 		String result = service.generateSummary(mockArticleDTO);

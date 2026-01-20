@@ -38,9 +38,20 @@
 		<mapstruct.version>1.5.5.Final</mapstruct.version>
 		<openai-java.version>0.18.0</openai-java.version>
 		<commons-lang3.version>3.14.0</commons-lang3.version>
-	</properties>
+        <micrometer-tracing-bridge-otel.version>1.6.1</micrometer-tracing-bridge-otel.version>
+    </properties>
 	<dependencyManagement>
 		<dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-starter-actuator</artifactId>
+                <version>3.5.9</version>
+            </dependency>
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-tracing-bridge-otel</artifactId>
+                <version>${micrometer-tracing-bridge-otel.version}</version>
+            </dependency>
 			<dependency>
 				<groupId>org.springframework.cloud</groupId>
 				<artifactId>spring-cloud-dependencies</artifactId>

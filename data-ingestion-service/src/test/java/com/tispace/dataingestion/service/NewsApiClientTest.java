@@ -3,17 +3,17 @@ package com.tispace.dataingestion.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tispace.common.entity.Article;
 import com.tispace.common.exception.ExternalApiException;
+import com.tispace.common.validation.ArticleValidator;
 import com.tispace.dataingestion.adapter.NewsApiAdapter;
 import com.tispace.dataingestion.mapper.NewsApiArticleMapper;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDateTime;
@@ -23,6 +23,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class NewsApiClientTest {
@@ -36,7 +37,11 @@ class NewsApiClientTest {
 	@Mock
 	private NewsApiArticleMapper newsApiArticleMapper;
 	
-	@InjectMocks
+	@Mock
+	private ArticleValidator articleValidator;
+	
+	private SimpleMeterRegistry meterRegistry;
+	
 	private NewsApiClient newsApiClient;
 	
 	private static final String NEWS_API_URL = "https://newsapi.org/v2/everything";
@@ -44,8 +49,20 @@ class NewsApiClientTest {
 	
 	@BeforeEach
 	void setUp() {
-		ReflectionTestUtils.setField(newsApiClient, "newsApiUrl", NEWS_API_URL);
-		ReflectionTestUtils.setField(newsApiClient, "apiKey", API_KEY);
+		meterRegistry = new SimpleMeterRegistry();
+		
+		newsApiClient = new NewsApiClient(
+			restTemplate,
+			objectMapper,
+			newsApiArticleMapper,
+			articleValidator,
+			meterRegistry,
+			NEWS_API_URL,
+			API_KEY
+		);
+		
+		// Mock articleValidator to return true by default (lenient to avoid unnecessary stubbing errors)
+		lenient().when(articleValidator.isValid(any(Article.class))).thenReturn(true);
 	}
 	
 	@Test
@@ -73,6 +90,7 @@ class NewsApiClientTest {
 		verify(objectMapper, times(1)).readValue(jsonResponse, NewsApiAdapter.class);
 		verify(newsApiArticleMapper, times(1)).toArticle(any(NewsApiAdapter.ArticleResponse.class));
 		verify(newsApiArticleMapper, times(1)).updateCategory(any(Article.class), eq(category));
+		verify(articleValidator, times(1)).isValid(any(Article.class));
 	}
 	
 	@Test
@@ -193,6 +211,7 @@ class NewsApiClientTest {
 		when(restTemplate.getForEntity(anyString(), eq(String.class))).thenReturn(responseEntity);
 		when(objectMapper.readValue(jsonResponse, NewsApiAdapter.class)).thenReturn(adapter);
 		when(newsApiArticleMapper.toArticle(any(NewsApiAdapter.ArticleResponse.class))).thenReturn(mockArticle);
+		when(articleValidator.isValid(mockArticle)).thenReturn(false); // Invalid article
 		
 		List<Article> result = newsApiClient.fetchArticles(keyword, category);
 		
@@ -261,7 +280,7 @@ class NewsApiClientTest {
 	}
 	
 	@Test
-	void testFetchArticles_NullAdapter_ReturnsEmptyList() throws Exception {
+	void testFetchArticles_NullAdapter_ThrowsException() throws Exception {
 		String keyword = "technology";
 		String category = "technology";
 		String jsonResponse = "{\"status\":\"ok\"}";
@@ -271,10 +290,9 @@ class NewsApiClientTest {
 		when(restTemplate.getForEntity(anyString(), eq(String.class))).thenReturn(responseEntity);
 		when(objectMapper.readValue(jsonResponse, NewsApiAdapter.class)).thenReturn(null);
 		
-		// The implementation checks if adapter is null before accessing getStatus()
-		// This will cause NullPointerException when trying to access adapter.getStatus()
-		// So we expect an exception or empty list depending on implementation
-		assertThrows(NullPointerException.class, 
+		// The implementation tries to access adapter.getStatus() which causes NullPointerException
+		// This NPE is caught and wrapped in ExternalApiException by the catch block
+		assertThrows(ExternalApiException.class, 
 			() -> newsApiClient.fetchArticles(keyword, category));
 	}
 	
@@ -373,6 +391,7 @@ class NewsApiClientTest {
 		when(restTemplate.getForEntity(anyString(), eq(String.class))).thenReturn(responseEntity);
 		when(objectMapper.readValue(jsonResponse, NewsApiAdapter.class)).thenReturn(adapter);
 		when(newsApiArticleMapper.toArticle(any(NewsApiAdapter.ArticleResponse.class))).thenReturn(mockArticle);
+		when(articleValidator.isValid(mockArticle)).thenReturn(false); // Invalid article
 		
 		List<Article> result = newsApiClient.fetchArticles(keyword, category);
 		
@@ -382,7 +401,7 @@ class NewsApiClientTest {
 	
 	@Test
 	void testFetchArticles_ArticleWithWhitespaceTitle_IncludesArticle() throws Exception {
-		// Note: StringUtils.isNotEmpty("   ") returns true, so whitespace title is treated as valid
+		// Note: ArticleValidator may accept whitespace title, so whitespace title is treated as valid
 		String keyword = "technology";
 		String category = "technology";
 		String jsonResponse = createMockJsonResponse();
@@ -396,11 +415,12 @@ class NewsApiClientTest {
 		when(restTemplate.getForEntity(anyString(), eq(String.class))).thenReturn(responseEntity);
 		when(objectMapper.readValue(jsonResponse, NewsApiAdapter.class)).thenReturn(adapter);
 		when(newsApiArticleMapper.toArticle(any(NewsApiAdapter.ArticleResponse.class))).thenReturn(mockArticle);
+		when(articleValidator.isValid(mockArticle)).thenReturn(true); // Valid article
 		
 		List<Article> result = newsApiClient.fetchArticles(keyword, category);
 		
 		assertNotNull(result);
-		// The implementation uses isNotEmpty, not isNotBlank, so whitespace title is kept
+		// ArticleValidator accepts it, so whitespace title is kept
 		assertFalse(result.isEmpty());
 		assertEquals("   ", result.get(0).getTitle());
 	}

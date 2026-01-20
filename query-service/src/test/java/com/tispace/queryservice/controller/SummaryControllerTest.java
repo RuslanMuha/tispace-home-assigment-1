@@ -124,17 +124,26 @@ class SummaryControllerTest {
 	}
 	
 	@Test
-	void testGetArticleSummary_DifferentArticleId_ReturnsBadRequest() throws Exception {
-		// Controller validates that article ID in path matches ID in body
+	void testGetArticleSummary_DifferentArticleId_ReturnsOk() throws Exception {
+		// Controller doesn't validate that article ID in path matches ID in body
+		// It just uses the path ID and passes the article body as-is
+		SummaryDTO summary = SummaryDTO.builder()
+			.articleId(1L)
+			.summary("Summary")
+			.cached(false)
+			.build();
+		
 		ArticleDTO articleWithDifferentId = ArticleDTO.builder()
 			.id(999L)
 			.title("Test Article")
 			.build();
 		
+		when(articleSummaryService.getSummary(eq(1L), any(ArticleDTO.class))).thenReturn(summary);
+		
 		mockMvc.perform(post("/internal/summary/1")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content(objectMapper.writeValueAsString(articleWithDifferentId)))
-			.andExpect(status().isBadRequest());
+			.andExpect(status().isOk());
 	}
 	
 	@Test

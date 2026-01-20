@@ -2,6 +2,8 @@ package com.tispace.dataingestion.controller;
 
 import com.tispace.common.dto.ArticleDTO;
 import com.tispace.common.exception.NotFoundException;
+import com.tispace.common.validation.SortStringParser;
+import com.tispace.dataingestion.client.QueryServiceClient;
 import com.tispace.dataingestion.service.ArticleQueryService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -13,6 +15,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.web.PageableHandlerMethodArgumentResolver;
 import org.springframework.data.web.SortHandlerMethodArgumentResolver;
 import org.springframework.http.MediaType;
@@ -25,6 +28,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -38,6 +42,12 @@ class ArticleControllerTest {
 	@Mock
 	private ArticleQueryService articleQueryService;
 	
+	@Mock
+	private QueryServiceClient queryServiceClient;
+	
+	@Mock
+	private SortStringParser sortStringParser;
+	
 	@InjectMocks
 	private ArticleController articleController;
 	
@@ -47,6 +57,9 @@ class ArticleControllerTest {
 	void setUp() {
 		PageableHandlerMethodArgumentResolver pageableResolver = new PageableHandlerMethodArgumentResolver();
 		pageableResolver.setOneIndexedParameters(false);
+		
+		// Mock SortStringParser to return default sort (lenient to avoid unnecessary stubbing errors)
+		lenient().when(sortStringParser.parse(any(String.class))).thenReturn(Sort.by(Sort.Direction.DESC, "publishedAt"));
 		
 		mockMvc = MockMvcBuilders.standaloneSetup(articleController)
 			.setControllerAdvice(new com.tispace.common.exception.GlobalExceptionHandler())
@@ -155,6 +168,7 @@ class ArticleControllerTest {
 	
 	@Test
 	void testGetArticles_ServiceThrowsException_ReturnsError() throws Exception {
+		// No need to stub sortStringParser here since it's already stubbed in setUp
 		when(articleQueryService.getArticlesDTO(any(Pageable.class), any()))
 			.thenThrow(new RuntimeException("Service error"));
 		
@@ -176,27 +190,23 @@ class ArticleControllerTest {
 	}
 	
 	@Test
-	void testGetArticles_InvalidPageNumber_ReturnsInternalServerError() throws Exception {
-		// Spring doesn't validate pageable parameters automatically
-		// Invalid pageable parameters cause exceptions in the service layer
-		// which are handled by GlobalExceptionHandler and return 500
+	void testGetArticles_InvalidPageNumber_ReturnsBadRequest() throws Exception {
+		// Spring validation with @Min annotation returns 400 Bad Request for invalid parameters
 		mockMvc.perform(get("/api/articles")
 				.param("page", "-1")
 				.param("size", "20")
 				.contentType(MediaType.APPLICATION_JSON))
-			.andExpect(status().isInternalServerError());
+			.andExpect(status().isBadRequest());
 	}
 	
 	@Test
-	void testGetArticles_InvalidSize_ReturnsInternalServerError() throws Exception {
-		// Spring doesn't validate pageable parameters automatically
-		// Invalid pageable parameters cause exceptions in the service layer
-		// which are handled by GlobalExceptionHandler and return 500
+	void testGetArticles_InvalidSize_ReturnsBadRequest() throws Exception {
+		// Spring validation with @Min annotation returns 400 Bad Request for invalid parameters
 		mockMvc.perform(get("/api/articles")
 				.param("page", "0")
 				.param("size", "0")
 				.contentType(MediaType.APPLICATION_JSON))
-			.andExpect(status().isInternalServerError());
+			.andExpect(status().isBadRequest());
 	}
 	
 	@Test

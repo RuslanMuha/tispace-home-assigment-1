@@ -81,6 +81,10 @@ server:
     include-binding-errors: always
 
 management:
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
   endpoints:
     web:
       exposure:
@@ -100,11 +104,23 @@ management:
       enabled: true
 
 logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} trace=%X{traceId} span=%X{spanId} - %msg%n"
   level:
     root: INFO
     com.tispace: DEBUG
     org.springframework.web: INFO
     org.hibernate: WARN
+
+singleflight:
+  lock-timeout-seconds: 30
+  in-flight-timeout-seconds: 5
+  result-ttl-seconds: 10
+
+  poll-initial-ms: 20
+  poll-max-ms: 200
+  poll-multiplier: 2
+
 
 springdoc:
   api-docs:

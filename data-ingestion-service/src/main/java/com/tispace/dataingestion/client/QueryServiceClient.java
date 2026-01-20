@@ -32,7 +32,6 @@ public class QueryServiceClient {
 	
 	@CircuitBreaker(name = "queryService", fallbackMethod = "getArticleSummaryFallback")
 	@Retry(name = "queryService")
-	@RateLimiter(name = "queryService", fallbackMethod = "getArticleSummaryFallback")
 	@Bulkhead(name = "queryService", type = Bulkhead.Type.THREADPOOL, fallbackMethod = "getArticleSummaryFallback")
 	public SummaryDTO getArticleSummary(Long articleId, ArticleDTO article) {
 		String url = String.format("%s%s/%d", queryServiceUrl, SUMMARY_ENDPOINT, articleId);
@@ -61,6 +60,7 @@ public class QueryServiceClient {
 	/**
 	 * Fallback method when circuit breaker is open, bulkhead is full, rate limit exceeded, or service is unavailable.
 	 * This method is invoked by Resilience4j annotations, not directly by code.
+	 * Attempts to return a graceful degraded response instead of always throwing exception.
 	 */
 	@SuppressWarnings("unused")
 	private SummaryDTO getArticleSummaryFallback(Long articleId, ArticleDTO article, Exception e) {
@@ -68,13 +68,23 @@ public class QueryServiceClient {
 			log.warn("Rate limit exceeded for query-service. Article id: {}", articleId);
 			throw new ExternalApiException("Rate limit exceeded. Please try again later.", e);
 		}
+		
 		String exceptionType = e != null ? e.getClass().getSimpleName() : "Unknown";
 		if (exceptionType.contains("Bulkhead")) {
 			log.warn("Query-service bulkhead is full (max concurrent calls reached). Article id: {}", articleId);
 			throw new ExternalApiException("Service is currently overloaded. Please try again later.", e);
 		}
-		log.error("Query-service circuit breaker is open or service unavailable. Using fallback for article id: {}", articleId, e);
-		throw new ExternalApiException("Query-service is currently unavailable. Please try again later.", e);
+		
+		// For circuit breaker or connection errors, return a degraded response
+		log.error("Query-service circuit breaker is open or service unavailable. Article id: {}. Error: {}", 
+			articleId, e != null ? e.getMessage() : "Unknown error", e);
+		
+		// Return a stub summary instead of throwing exception for better user experience
+		return SummaryDTO.builder()
+			.articleId(articleId)
+			.summary("Summary generation is temporarily unavailable. Please try again later.")
+			.cached(false)
+			.build();
 	}
 }
 

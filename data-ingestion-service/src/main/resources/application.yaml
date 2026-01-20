@@ -59,6 +59,10 @@ server:
     include-binding-errors: always
 
 management:
+  tracing:
+    enabled: true
+    sampling:
+      probability: 1.0
   endpoints:
     web:
       exposure:
@@ -122,20 +126,21 @@ resilience4j:
         limitForPeriod: ${RATE_LIMITER_LIMIT:10}
         limitRefreshPeriod: ${RATE_LIMITER_PERIOD:1s}
         timeoutDuration: ${RATE_LIMITER_TIMEOUT:5s}
-  thread-pool-bulkhead:
+      articleController:
+        limitForPeriod: ${ARTICLE_RATE_LIMITER_LIMIT:100}
+        limitRefreshPeriod: ${ARTICLE_RATE_LIMITER_PERIOD:1m}
+        timeoutDuration: ${ARTICLE_RATE_LIMITER_TIMEOUT:0}
+  bulkhead:
     instances:
       queryService:
-        coreThreadPoolSize: 10
-        maxThreadPoolSize: 20
-        queueCapacity: 50
-        keepAliveDuration: 30s
-
+        maxConcurrentCalls: 20
+        maxWaitDuration: 0ms
       newsApi:
-        coreThreadPoolSize: 5
-        maxThreadPoolSize: 10
-        queueCapacity: 100
-        keepAliveDuration: 30s
+        maxConcurrentCalls: 10
+        maxWaitDuration: 0ms
 logging:
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} trace=%X{traceId} span=%X{spanId} - %msg%n"
   level:
     root: INFO
     com.tispace: DEBUG

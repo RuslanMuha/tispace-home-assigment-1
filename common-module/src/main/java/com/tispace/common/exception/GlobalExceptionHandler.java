@@ -2,6 +2,7 @@ package com.tispace.common.exception;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.tispace.common.dto.ErrorResponseDTO;
+import com.tispace.common.util.SensitiveDataFilter;
 import org.apache.commons.lang3.StringUtils;
 import io.swagger.v3.oas.annotations.Hidden;
 import lombok.extern.slf4j.Slf4j;
@@ -78,7 +79,8 @@ public class GlobalExceptionHandler {
 	
 	@ExceptionHandler(ExternalApiException.class)
 	public ResponseEntity<ErrorResponseDTO> handleExternalApiException(ExternalApiException ex, WebRequest request) {
-		log.error("External API error: {}", ex.getMessage(), ex);
+		String sanitizedMessage = sanitizeMessage(ex.getMessage());
+		log.error("External API error: {}", sanitizedMessage);
 		return buildErrorResponse(ERROR_CODE_EXTERNAL_API_ERROR, ex.getMessage(), HttpStatus.SERVICE_UNAVAILABLE, request);
 	}
 	
@@ -92,7 +94,8 @@ public class GlobalExceptionHandler {
 		String errorCode = determineErrorCode(status);
 		String message = determineHttpErrorMessage(ex, status);
 		
-		log.error("HTTP client error [{}]: {}", status.value(), message, ex);
+		String sanitizedMessage = sanitizeMessage(message);
+		log.error("HTTP client error [{}]: {}", status.value(), sanitizedMessage);
 		return buildErrorResponse(errorCode, message, status, request);
 	}
 	
@@ -110,7 +113,8 @@ public class GlobalExceptionHandler {
 			}
 		}
 		
-		log.error("Resource access error: {}", exceptionMessage, ex);
+		String sanitizedMessage = sanitizeMessage(exceptionMessage);
+		log.error("Resource access error: {}", sanitizedMessage);
 		return buildErrorResponse(ERROR_CODE_CONNECTION_ERROR, message, HttpStatus.SERVICE_UNAVAILABLE, request);
 	}
 	
@@ -255,7 +259,11 @@ public class GlobalExceptionHandler {
 			}
 			return description.replace(URI_PREFIX, "");
 		} catch (Exception e) {
-			log.warn("Failed to extract path from request", e);
+			try {
+				log.warn("Failed to extract path from request", e);
+			} catch (Exception logException) {
+				// Ignore logging exceptions to ensure we always return UNKNOWN_PATH
+			}
 			return UNKNOWN_PATH;
 		}
 	}
@@ -302,14 +310,31 @@ public class GlobalExceptionHandler {
 			return "Resource conflict. The resource already exists or is in use.";
 		}
 		
-		// Try to extract meaningful message from response body
-		String responseBody = ex.getResponseBodyAsString();
-		if (!responseBody.isEmpty()) {
-			return truncateMessage(responseBody);
+		String exceptionMessage = ex.getMessage();
+		if (exceptionMessage != null && !exceptionMessage.isEmpty()) {
+			// Extract only the status code part, not the full response body
+			return HTTP_ERROR_MESSAGE;
 		}
 		
-		String exceptionMessage = ex.getMessage();
-		return exceptionMessage != null ? exceptionMessage : HTTP_ERROR_MESSAGE;
+		return HTTP_ERROR_MESSAGE;
+	}
+	
+	/**
+	 * Sanitizes a message by masking sensitive data and truncating if necessary.
+	 * 
+	 * @param message the message to sanitize
+	 * @return the sanitized message
+	 */
+	private String sanitizeMessage(String message) {
+		if (message == null) {
+			return null;
+		}
+		
+		// First mask sensitive data
+		String masked = SensitiveDataFilter.maskSensitiveData(message);
+		
+		// Then truncate if too long
+		return truncateMessage(masked);
 	}
 }
 

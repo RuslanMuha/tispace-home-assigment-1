@@ -2,9 +2,10 @@ package com.tispace.queryservice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tispace.common.exception.ExternalApiException;
+import com.tispace.queryservice.config.SingleFlightProperties;
+import com.tispace.queryservice.dto.SingleFlightEnvelope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -30,18 +31,7 @@ public class SingleFlightService implements SingleFlightExecutor {
 
     private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
-
-    @Value("${singleflight.lock-timeout-seconds:30}")
-    private long lockTimeoutSeconds;
-
-    @Value("${singleflight.in-flight-timeout-seconds:10}")
-    private long inFlightTimeoutSeconds;
-
-    @Value("${singleflight.result-ttl-seconds:30}")
-    private long resultTtlSeconds;
-
-    @Value("${singleflight.poll-interval-ms:50}")
-    private long pollIntervalMs;
+    private final SingleFlightProperties singleFlightProperties;
 
     // local fallback
     private final ConcurrentHashMap<String, CompletableFuture<?>> inFlightRequests = new ConcurrentHashMap<>();
@@ -56,11 +46,6 @@ public class SingleFlightService implements SingleFlightExecutor {
             Long.class
     );
 
-    /**
-     * Distributed single-flight:
-     * - One instance computes and stores the result in Redis
-     * - Others wait for result-key instead of recomputing
-     */
     @Override
     public <T> T execute(String key, Class<T> resultType, SingleFlightOperation<T> operation) throws Exception {
         if (key == null || key.isBlank()) {
@@ -73,19 +58,27 @@ public class SingleFlightService implements SingleFlightExecutor {
         String lockKey = LOCK_PREFIX + key;
         String resultKey = RESULT_PREFIX + key;
 
-        Duration lockTtl = Duration.ofSeconds(lockTimeoutSeconds + 5);
-        Duration resultTtl = Duration.ofSeconds(resultTtlSeconds);
+        // lock ttl must cover wait time (+ small buffer)
+        long lockSeconds = Math.max(
+                singleFlightProperties.getLockTimeoutSeconds(),
+                singleFlightProperties.getInFlightTimeoutSeconds() + 5
+        );
+        Duration lockTtl = Duration.ofSeconds(lockSeconds);
+        Duration resultTtl = Duration.ofSeconds(singleFlightProperties.getResultTtlSeconds());
 
         String token = UUID.randomUUID().toString();
 
-        // Optimization: if result already exists (another instance finished)
+        // fast-path: if leader already stored envelope
         try {
-            String cached = redis.opsForValue().get(resultKey);
+            SingleFlightEnvelope cached = readEnvelope(resultKey);
             if (cached != null) {
-                return objectMapper.readValue(cached, resultType);
+                return unwrapEnvelope(resultKey, cached, resultType);
             }
+        } catch (ExternalApiException e) {
+            // This is NOT a Redis failure and MUST be propagated (tests expect this).
+            throw e;
         } catch (Exception e) {
-            // Redis might be down => local fallback
+            // fallback only on real Redis/serialization issues
             log.warn("Redis read failed for resultKey={}, fallback to in-memory single-flight", resultKey, e);
             return executeWithInMemorySingleFlight(key, operation);
         }
@@ -93,56 +86,114 @@ public class SingleFlightService implements SingleFlightExecutor {
         Boolean acquired = tryAcquireLock(lockKey, token, lockTtl);
 
         if (Boolean.TRUE.equals(acquired)) {
-            // We are the leader
+            // leader path
             try {
                 T result = operation.execute();
 
-                // store result for followers
-                try {
-                    String json = objectMapper.writeValueAsString(result);
-                    redis.opsForValue().set(resultKey, json, resultTtl);
-                } catch (Exception e) {
-                    // Do NOT fail the main operation if caching failed
-                    log.warn("Failed to store single-flight result for key={}", key, e);
-                }
+                // store SUCCESS envelope for followers
+                safeWriteEnvelope(
+                        resultKey,
+                        new SingleFlightEnvelope(true, objectMapper.writeValueAsString(result), null, null),
+                        resultTtl
+                );
 
                 return result;
+            } catch (Exception leaderError) {
+                // store FAILURE envelope so followers fail fast
+                safeWriteEnvelope(
+                        resultKey,
+                        new SingleFlightEnvelope(false, null, mapErrorCode(leaderError), safeMessage(leaderError)),
+                        resultTtl
+                );
+
+                throw leaderError;
             } finally {
                 releaseLockSafely(lockKey, token);
             }
         }
 
-        // Someone else is computing => wait for the result in Redis
+        // follower path: wait for envelope with backoff polling
         try {
-            return waitForResult(resultKey, resultType);
+            return waitForEnvelopeWithBackoff(resultKey, resultType);
+        } catch (ExternalApiException e) {
+            // If the envelope indicates error OR is malformed (missing payload),
+            // it's a valid single-flight failure and must NOT fallback to in-memory.
+            throw e;
         } catch (Exception waitError) {
-            // If waiting fails (timeout, redis issues) => fallback to in-memory single-flight
-            log.warn("Failed waiting for single-flight result key={}, fallback to in-memory", resultKey, waitError);
+            //fallback only for Redis waiting failures (timeouts, redis errors, etc.)
+            log.warn("Failed waiting for resultKey={}, fallback to in-memory", resultKey, waitError);
             return executeWithInMemorySingleFlight(key, operation);
         }
     }
 
+    private <T> T waitForEnvelopeWithBackoff(String resultKey, Class<T> resultType) throws Exception {
+        long deadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(singleFlightProperties.getInFlightTimeoutSeconds());
 
-
-    private <T> T waitForResult(String resultKey, Class<T> resultType) throws Exception {
-        long deadlineNs = System.nanoTime() + TimeUnit.SECONDS.toNanos(inFlightTimeoutSeconds);
+        long sleepMs = Math.max(1, singleFlightProperties.getPollInitialMs());
 
         while (System.nanoTime() < deadlineNs) {
-            String json = redis.opsForValue().get(resultKey);
-            if (json != null) {
-                return objectMapper.readValue(json, resultType);
+            if (Thread.currentThread().isInterrupted()) {
+                Thread.currentThread().interrupt();
+                throw new ExternalApiException("Interrupted while waiting for single-flight resultKey=" + resultKey);
             }
 
-            // simple bounded sleep
-            Thread.sleep(pollIntervalMs);
+            SingleFlightEnvelope env;
+            try {
+                env = readEnvelope(resultKey);
+            } catch (Exception redisErr) {
+                // real Redis error while waiting -> caller may choose fallback
+                throw new ExternalApiException("Redis error while waiting for resultKey=" + resultKey, redisErr);
+            }
+
+            if (env != null) {
+                // If env indicates error / missing payload -> unwrapEnvelope throws ExternalApiException
+                return unwrapEnvelope(resultKey, env, resultType);
+            }
+
+            long remainingNs = deadlineNs - System.nanoTime();
+            if (remainingNs <= 0) break;
+
+            long maxSleepByDeadlineMs = TimeUnit.NANOSECONDS.toMillis(remainingNs);
+            long actualSleepMs = Math.min(sleepMs, Math.max(1, maxSleepByDeadlineMs));
+
+            Thread.sleep(actualSleepMs);
+
+            // exponential backoff up to max
+            long next = sleepMs * Math.max(1, singleFlightProperties.getPollMultiplier());
+            sleepMs = Math.min(Math.max(1, singleFlightProperties.getPollMaxMs()), next);
         }
 
         throw new ExternalApiException("Single-flight timeout waiting for resultKey=" + resultKey);
     }
 
-    /**
-     * Local in-memory single-flight (safe, no commonPool).
-     */
+    private SingleFlightEnvelope readEnvelope(String resultKey) throws Exception {
+        String json = redis.opsForValue().get(resultKey);
+        if (json == null) return null;
+        return objectMapper.readValue(json, SingleFlightEnvelope.class);
+    }
+
+    private void safeWriteEnvelope(String resultKey, SingleFlightEnvelope envelope, Duration ttl) {
+        try {
+            redis.opsForValue().set(resultKey, objectMapper.writeValueAsString(envelope), ttl);
+        } catch (Exception e) {
+            // caching failure shouldn't break business logic
+            log.warn("Failed to store single-flight envelope for resultKey={}", resultKey, e);
+        }
+    }
+
+    private <T> T unwrapEnvelope(String resultKey, SingleFlightEnvelope envelope, Class<T> resultType) throws Exception {
+        if (envelope.isSuccess()) {
+            if (envelope.getPayload() == null) {
+                throw new ExternalApiException("Single-flight envelope missing payload for key=" + resultKey);
+            }
+            return objectMapper.readValue(envelope.getPayload(), resultType);
+        }
+
+        String code = envelope.getErrorCode() != null ? envelope.getErrorCode() : "UPSTREAM_ERROR";
+        String msg = envelope.getMessage() != null ? envelope.getMessage() : "Single-flight operation failed";
+        throw new ExternalApiException("Single-flight failed (" + code + "): " + msg);
+    }
+
     @SuppressWarnings("unchecked")
     private <T> T executeWithInMemorySingleFlight(String key, SingleFlightOperation<T> operation) throws Exception {
         CompletableFuture<T> newFuture = new CompletableFuture<>();
@@ -162,7 +213,7 @@ public class SingleFlightService implements SingleFlightExecutor {
         }
 
         try {
-            return existing.get(inFlightTimeoutSeconds, TimeUnit.SECONDS);
+            return existing.get(singleFlightProperties.getInFlightTimeoutSeconds(), TimeUnit.SECONDS);
         } catch (Exception e) {
             throw new ExternalApiException("In-flight wait failed for key=" + key, e);
         }
@@ -170,7 +221,6 @@ public class SingleFlightService implements SingleFlightExecutor {
 
     private Boolean tryAcquireLock(String lockKey, String token, Duration ttl) {
         try {
-            // SET lockKey token NX EX ttl
             return redis.opsForValue().setIfAbsent(lockKey, token, ttl);
         } catch (Exception e) {
             log.warn("Failed to acquire distributed lock {}. Redis may be unavailable.", lockKey, e);
@@ -184,6 +234,18 @@ public class SingleFlightService implements SingleFlightExecutor {
         } catch (Exception e) {
             log.warn("Failed to release lock safely. lockKey={}", lockKey, e);
         }
+    }
+
+    private String mapErrorCode(Throwable t) {
+        return (t instanceof ExternalApiException) ? "EXTERNAL_API" : "INTERNAL_ERROR";
+    }
+
+    private String safeMessage(Throwable t) {
+        String raw = t.getMessage();
+        if (raw == null || raw.isBlank()) {
+            return t.getClass().getSimpleName();
+        }
+        return raw.length() > 300 ? raw.substring(0, 300) : raw;
     }
 }
 

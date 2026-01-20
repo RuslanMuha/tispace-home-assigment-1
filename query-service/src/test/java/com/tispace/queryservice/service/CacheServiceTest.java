@@ -1,6 +1,7 @@
 package com.tispace.queryservice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tispace.queryservice.cache.CacheResult;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,23 +57,26 @@ class CacheServiceTest {
 		when(valueOperations.get(key)).thenReturn(jsonValue);
 		when(objectMapper.readValue(jsonValue, TestObject.class)).thenReturn(expectedObject);
 		
-		TestObject result = cacheService.get(key, TestObject.class);
+		CacheResult<TestObject> result = cacheService.get(key, TestObject.class);
 		
 		assertNotNull(result);
-		assertEquals(1L, result.getId());
-		assertEquals("test", result.getName());
+		assertTrue(result instanceof CacheResult.Hit);
+		TestObject value = ((CacheResult.Hit<TestObject>) result).value();
+		assertEquals(1L, value.getId());
+		assertEquals("test", value.getName());
 		verify(valueOperations, times(1)).get(key);
 	}
 	
 	@Test
-	void testGet_KeyNotExists_ReturnsNull() {
+	void testGet_KeyNotExists_ReturnsMiss() {
 		String key = "test:key";
 		
 		when(valueOperations.get(key)).thenReturn(null);
 		
-		TestObject result = cacheService.get(key, TestObject.class);
+		CacheResult<TestObject> result = cacheService.get(key, TestObject.class);
 		
-		assertNull(result);
+		assertNotNull(result);
+		assertTrue(result instanceof CacheResult.Miss);
 		verify(valueOperations, times(1)).get(key);
 	}
 	
@@ -107,8 +111,8 @@ class CacheServiceTest {
 	}
 	
 	@Test
-	void testGet_DeserializationException_ReturnsNull() throws Exception {
-		// CacheService handles exceptions gracefully and returns null (cache miss)
+	void testGet_DeserializationException_ReturnsError() throws Exception {
+		// CacheService handles exceptions gracefully and returns CacheResult.error()
 		String key = "test:key";
 		String jsonValue = "invalid json";
 		
@@ -116,9 +120,10 @@ class CacheServiceTest {
 		when(objectMapper.readValue(jsonValue, TestObject.class))
 			.thenThrow(new com.fasterxml.jackson.databind.JsonMappingException(null, "Parse error"));
 		
-		TestObject result = cacheService.get(key, TestObject.class);
+		CacheResult<TestObject> result = cacheService.get(key, TestObject.class);
 		
-		assertNull(result); // Exceptions are handled and return null
+		assertNotNull(result);
+		assertTrue(result instanceof CacheResult.Error); // Exceptions are handled and return error
 		verify(valueOperations, times(1)).get(key);
 	}
 	
@@ -139,15 +144,16 @@ class CacheServiceTest {
 	}
 	
 	@Test
-	void testGet_RedisThrowsException_ReturnsNull() {
-		// CacheService handles exceptions gracefully and returns null (cache miss)
+	void testGet_RedisThrowsException_ReturnsError() {
+		// CacheService handles exceptions gracefully and returns CacheResult.error()
 		String key = "test:key";
 		
 		when(valueOperations.get(key)).thenThrow(new RuntimeException("Redis connection error"));
 		
-		TestObject result = cacheService.get(key, TestObject.class);
+		CacheResult<TestObject> result = cacheService.get(key, TestObject.class);
 		
-		assertNull(result); // Exceptions are handled and return null
+		assertNotNull(result);
+		assertTrue(result instanceof CacheResult.Error); // Exceptions are handled and return error
 		verify(valueOperations, times(1)).get(key);
 	}
 	
@@ -199,9 +205,10 @@ class CacheServiceTest {
 		when(valueOperations.get(key)).thenReturn(jsonValue);
 		when(objectMapper.readValue(jsonValue, TestObject.class)).thenReturn(expectedObject);
 		
-		TestObject result = cacheService.get(key, TestObject.class);
+		CacheResult<TestObject> result = cacheService.get(key, TestObject.class);
 		
 		assertNotNull(result);
+		assertTrue(result instanceof CacheResult.Hit);
 		verify(valueOperations, times(1)).get(key);
 	}
 	
@@ -232,11 +239,12 @@ class CacheServiceTest {
 	}
 	
 	@Test
-	void testGet_NullKey_ReturnsNull() throws Exception {
-		// CacheService handles null key gracefully and returns null
-		TestObject result = cacheService.get(null, TestObject.class);
+	void testGet_NullKey_ReturnsMiss() throws Exception {
+		// CacheService handles null key gracefully and returns CacheResult.miss()
+		CacheResult<TestObject> result = cacheService.get(null, TestObject.class);
 		
-		assertNull(result);
+		assertNotNull(result);
+		assertTrue(result instanceof CacheResult.Miss);
 		verify(valueOperations, never()).get(anyString());
 	}
 	

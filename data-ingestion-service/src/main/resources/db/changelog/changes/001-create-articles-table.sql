@@ -17,3 +17,4 @@ CREATE INDEX IF NOT EXISTS idx_category ON articles(category);
 CREATE INDEX IF NOT EXISTS idx_published_at ON articles(published_at);
 
 
+

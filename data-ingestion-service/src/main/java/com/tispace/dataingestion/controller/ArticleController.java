@@ -2,9 +2,11 @@ package com.tispace.dataingestion.controller;
 
 import com.tispace.common.dto.ArticleDTO;
 import com.tispace.common.dto.SummaryDTO;
-import com.tispace.common.exception.BusinessException;
+import com.tispace.common.validation.SortStringParser;
 import com.tispace.dataingestion.client.QueryServiceClient;
 import com.tispace.dataingestion.service.ArticleQueryService;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
+import io.github.resilience4j.ratelimiter.annotation.RateLimiter;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -22,28 +24,26 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.Set;
 
 @RestController
 @RequestMapping("/api/articles")
-@RequiredArgsConstructor
 @Slf4j
+@RequiredArgsConstructor
+@Validated
 @Tag(name = "Articles", description = "Public API for querying news articles and generating AI-powered summaries")
 public class ArticleController {
 	
-	private static final Set<String> VALID_SORT_FIELDS = Set.of(
-		"id", "title", "description", "author", "publishedAt", "category", "createdAt", "updatedAt"
-	);
-	
 	private final ArticleQueryService articleQueryService;
 	private final QueryServiceClient queryServiceClient;
-	
+	private final SortStringParser sortStringParser;
+
 	@GetMapping
+	@RateLimiter(name = "articleController", fallbackMethod = "getArticlesRateLimitFallback")
 	@Operation(
 		summary = "Get paginated list of articles",
-		description = "Retrieves a paginated list of articles with optional filtering by category. Results are sorted by published date in descending order by default."
+		description = "Retrieves a paginated list of articles with optional filtering by category. Results are sorted by published date in descending order by default. Rate limited to prevent abuse."
 	)
 	@ApiResponses(value = {
 		@ApiResponse(
@@ -54,6 +54,10 @@ public class ArticleController {
 		@ApiResponse(
 			responseCode = "400",
 			description = "Invalid request parameters"
+		),
+		@ApiResponse(
+			responseCode = "429",
+			description = "Rate limit exceeded. Default limit: 100 requests per minute per endpoint. Retry after the rate limit period expires."
 		),
 		@ApiResponse(
 			responseCode = "500",
@@ -81,7 +85,7 @@ public class ArticleController {
 			example = "publishedAt,desc"
 		)
 		@RequestParam(required = false, defaultValue = "publishedAt,desc")
-		@Pattern(regexp = "^[a-zA-Z]+,(asc|desc)$", message = "Sort parameter must be in format 'field,direction' where direction is 'asc' or 'desc'")
+        @Size(max = 50)
 		String sort,
 		@Parameter(
 			description = "Filter articles by category (optional)",
@@ -91,60 +95,22 @@ public class ArticleController {
 		@Size(max = 100, message = "Category cannot exceed 100 characters")
 		String category) {
 		
-		// Parse sort string into Sort object
-		Sort sortObj = parseSortString(sort);
-		Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size, sortObj);
-		
-		log.debug("Fetching articles: pageable={}, category={}", pageable, category);
-		
-		Page<ArticleDTO> articles = articleQueryService.getArticlesDTO(pageable, category);
-		return ResponseEntity.ok(articles);
-	}
-	
-	private Sort parseSortString(String sortString) {
-		if (sortString == null || sortString.isEmpty()) {
-			return Sort.by(Sort.Direction.DESC, "publishedAt");
-		}
-		
-		String[] parts = sortString.split(",");
-		if (parts.length != 2) {
-			throw new BusinessException("Sort parameter must be in format 'field,direction' (e.g., 'publishedAt,desc')");
-		}
-		
-		String field = parts[0].trim();
-		String direction = parts[1].trim().toLowerCase();
-		
-		// Validate sort field
-		if (field.isEmpty()) {
-			throw new BusinessException("Sort field cannot be empty");
-		}
-		
-		if (!VALID_SORT_FIELDS.contains(field)) {
-			throw new BusinessException(String.format("Invalid sort field: %s. Valid fields are: %s", 
-				field, String.join(", ", VALID_SORT_FIELDS)));
-		}
-		
-		// Validate sort direction
-		if (direction.isEmpty()) {
-			throw new BusinessException("Sort direction cannot be empty");
-		}
-		
-		Sort.Direction sortDirection;
-		if ("asc".equals(direction)) {
-			sortDirection = Sort.Direction.ASC;
-		} else if ("desc".equals(direction)) {
-			sortDirection = Sort.Direction.DESC;
-		} else {
-			throw new BusinessException(String.format("Invalid sort direction: %s. Must be 'asc' or 'desc'", direction));
-		}
-		
-		return Sort.by(sortDirection, field);
-	}
+        Sort sortObj = sortStringParser.parse(sort);
+        Pageable pageable = org.springframework.data.domain.PageRequest.of(page, size, sortObj);
+
+        log.debug("Fetching articles: page={}, size={}, sort={}, category={}", page, size, sort, category);
+
+        Page<ArticleDTO> articles = articleQueryService.getArticlesDTO(pageable, category);
+        return ResponseEntity.ok(articles);
+    }
 	
 	@GetMapping("/{id}")
+	@RateLimiter(name = "articleController", fallbackMethod = "getArticleByIdRateLimitFallback")
 	@Operation(
 		summary = "Get article by ID",
-		description = "Retrieves a single article by its unique identifier"
+		description = "Retrieves a single article by its unique identifier. " +
+			"Rate limited to 100 requests per minute. " +
+			"Supports correlation ID via X-Correlation-ID header."
 	)
 	@ApiResponses(value = {
 		@ApiResponse(
@@ -159,6 +125,10 @@ public class ArticleController {
 		@ApiResponse(
 			responseCode = "400",
 			description = "Invalid article ID"
+		),
+		@ApiResponse(
+			responseCode = "429",
+			description = "Rate limit exceeded"
 		),
 		@ApiResponse(
 			responseCode = "500",
@@ -183,9 +153,15 @@ public class ArticleController {
 	}
 	
 	@GetMapping("/{id}/summary")
+	@RateLimiter(name = "articleController", fallbackMethod = "getArticleSummaryRateLimitFallback")
 	@Operation(
 		summary = "Get AI-generated article summary",
-		description = "Retrieves an AI-generated summary of an article using ChatGPT. The summary is cached for 24 hours. First request generates the summary, subsequent requests return the cached version."
+		description = "Retrieves an AI-generated summary of an article using ChatGPT. " +
+			"The summary is cached for 24 hours with TTL jitter to prevent cache stampede. " +
+			"First request generates the summary, subsequent requests return the cached version. " +
+			"Uses single-flight pattern to prevent concurrent generation for the same article. " +
+			"Rate limited to 100 requests per minute. " +
+			"Supports correlation ID via X-Correlation-ID header."
 	)
 	@ApiResponses(value = {
 		@ApiResponse(
@@ -200,6 +176,10 @@ public class ArticleController {
 		@ApiResponse(
 			responseCode = "400",
 			description = "Invalid article ID"
+		),
+		@ApiResponse(
+			responseCode = "429",
+			description = "Rate limit exceeded"
 		),
 		@ApiResponse(
 			responseCode = "500",
@@ -226,6 +206,35 @@ public class ArticleController {
 		SummaryDTO summary = queryServiceClient.getArticleSummary(id, article);
 		return ResponseEntity.ok(summary);
 	}
+	
+	/**
+	 * Fallback method for rate limit exceeded on getArticles endpoint.
+	 */
+	@SuppressWarnings("unused")
+    private ResponseEntity<Page<ArticleDTO>> getArticlesRateLimitFallback(
+            Integer page, Integer size, String sort, String category, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for getArticles. page={}, size={}", page, size);
+        return ResponseEntity.status(429).build();
+    }
+
+
+	/**
+	 * Fallback method for rate limit exceeded on getArticleById endpoint.
+	 */
+	@SuppressWarnings("unused")
+    private ResponseEntity<ArticleDTO> getArticleByIdRateLimitFallback(Long id, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for getArticleById. id={}", id);
+        return ResponseEntity.status(429).build();
+    }
+
+	/**
+	 * Fallback method for rate limit exceeded on getArticleSummary endpoint.
+	 */
+	@SuppressWarnings("unused")
+    private ResponseEntity<SummaryDTO> getArticleSummaryRateLimitFallback(Long id, RequestNotPermitted e) {
+        log.warn("Rate limit exceeded for getArticleSummary. id={}", id);
+        return ResponseEntity.status(429).build();
+    }
 }
 
 

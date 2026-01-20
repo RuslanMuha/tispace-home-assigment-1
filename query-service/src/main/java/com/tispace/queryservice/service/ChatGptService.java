@@ -1,11 +1,13 @@
 package com.tispace.queryservice.service;
 
 import com.theokanning.openai.completion.chat.ChatCompletionRequest;
+import com.theokanning.openai.completion.chat.ChatCompletionResult;
 import com.theokanning.openai.completion.chat.ChatMessage;
 import com.theokanning.openai.completion.chat.ChatMessageRole;
 import com.theokanning.openai.service.OpenAiService;
 import com.tispace.common.dto.ArticleDTO;
 import com.tispace.common.exception.ExternalApiException;
+import com.tispace.common.validation.ArticleValidator;
 import com.tispace.queryservice.constants.ChatGptConstants;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.retry.annotation.Retry;
@@ -23,20 +25,20 @@ import java.util.List;
 public class ChatGptService {
 	
 	private final OpenAiService openAiService;
+    private final ArticleValidator articleValidator;
 	
 	@Value("${openai.model:gpt-3.5-turbo}")
 	private String model;
 	
-	public ChatGptService(ObjectProvider<OpenAiService> openAiServiceProvider) {
+	public ChatGptService(ObjectProvider<OpenAiService> openAiServiceProvider, ArticleValidator articleValidator) {
 		this.openAiService = openAiServiceProvider.getIfAvailable(); // Can be null if OpenAI API key is not configured
-	}
+        this.articleValidator = articleValidator;
+    }
 	
 	@CircuitBreaker(name = "openAiApi", fallbackMethod = "generateSummaryFallback")
 	@Retry(name = "openAiApi")
 	public String generateSummary(ArticleDTO article) {
-		if (article == null) {
-			throw new IllegalArgumentException("Article cannot be null");
-		}
+        articleValidator.validateInput(article);
 		
 		if (openAiService == null) {
 			log.warn("OpenAI API key is not configured. Returning mock summary for article id: {}", article.getId());
@@ -51,43 +53,57 @@ public class ChatGptService {
 			return generateMockSummary(article);
 		}
 		
+		ChatCompletionRequest request = buildRequest(prompt);
+		ChatCompletionResult completion = openAiService.createChatCompletion(request);
+		
+		return extractContent(completion, article.getId());
+	}
+
+	/**
+	 * Builds ChatGPT completion request.
+	 */
+	private ChatCompletionRequest buildRequest(String prompt) {
 		List<ChatMessage> messages = new ArrayList<>();
 		messages.add(new ChatMessage(ChatMessageRole.SYSTEM.value(), 
 			ChatGptConstants.SYSTEM_ROLE_MESSAGE));
 		messages.add(new ChatMessage(ChatMessageRole.USER.value(), prompt));
 		
-		ChatCompletionRequest request = ChatCompletionRequest.builder()
+		return ChatCompletionRequest.builder()
 			.model(model)
 			.messages(messages)
 			.maxTokens(ChatGptConstants.MAX_TOKENS)
 			.temperature(ChatGptConstants.TEMPERATURE)
 			.build();
-		
-		var completion = openAiService.createChatCompletion(request);
+	}
+	
+	/**
+	 * Extracts content from ChatGPT completion response.
+	 */
+	private String extractContent(ChatCompletionResult completion, Long articleId) {
 		if (completion == null) {
-			log.error("OpenAI API returned null completion for article id: {}", article.getId());
+			log.error("OpenAI API returned null completion for article id: {}", articleId);
 			throw new ExternalApiException("OpenAI API returned null response");
 		}
 		
-		var choices = completion.getChoices();
+		java.util.List<com.theokanning.openai.completion.chat.ChatCompletionChoice> choices = completion.getChoices();
 		if (choices == null || choices.isEmpty()) {
-			log.error("OpenAI API returned empty choices for article id: {}", article.getId());
+			log.error("OpenAI API returned empty choices for article id: {}", articleId);
 			throw new ExternalApiException("OpenAI API returned no choices in response");
 		}
 		
-		var firstChoice = choices.getFirst();
+		com.theokanning.openai.completion.chat.ChatCompletionChoice firstChoice = choices.getFirst();
 		if (firstChoice == null || firstChoice.getMessage() == null) {
-			log.error("OpenAI API returned null choice or message for article id: {}", article.getId());
+			log.error("OpenAI API returned null choice or message for article id: {}", articleId);
 			throw new ExternalApiException("OpenAI API returned invalid response structure");
 		}
 		
 		String content = firstChoice.getMessage().getContent();
 		if (content == null || content.trim().isEmpty()) {
-			log.error("OpenAI API returned null or empty content for article id: {}", article.getId());
+			log.error("OpenAI API returned null or empty content for article id: {}", articleId);
 			throw new ExternalApiException("OpenAI API returned empty summary content");
 		}
 		
-		log.info("Successfully generated summary for article id: {}", article.getId());
+		log.info("Successfully generated summary for article id: {}", articleId);
 		return content.trim();
 	}
 	
