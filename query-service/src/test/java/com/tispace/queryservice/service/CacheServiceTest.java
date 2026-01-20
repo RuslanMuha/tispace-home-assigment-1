@@ -2,6 +2,7 @@ package com.tispace.queryservice.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tispace.queryservice.cache.CacheResult;
+import com.tispace.queryservice.cache.CacheService;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;

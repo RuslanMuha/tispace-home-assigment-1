@@ -1,8 +1,7 @@
-package com.tispace.queryservice.service;
+package com.tispace.queryservice.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tispace.queryservice.cache.CacheResult;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.micrometer.core.instrument.Counter;
@@ -12,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.Random;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -24,53 +22,16 @@ public class CacheService {
 
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper;
-
-    // Metrics
-    private final Counter cacheHits;
-    private final Counter cacheMisses;
-    private final Counter cacheErrors;
-    private final Counter cacheUnavailable;
-    private final Timer cacheGetTimer;
-    private final Timer cachePutTimer;
+    private final CacheMetrics metrics;
 
     public CacheService(
             RedisTemplate<String, String> redisTemplate,
             ObjectMapper objectMapper,
-            MeterRegistry meterRegistry
+            CacheMetrics metrics
     ) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
-
-
-        this.cacheHits = Counter.builder("cache.hits")
-                .description("Number of cache hits")
-                .tag("cache", "summary")
-                .register(meterRegistry);
-
-        this.cacheMisses = Counter.builder("cache.misses")
-                .description("Number of cache misses")
-                .tag("cache", "summary")
-                .register(meterRegistry);
-
-        this.cacheErrors = Counter.builder("cache.errors")
-                .description("Number of cache errors (serialization/redis errors)")
-                .tag("cache", "summary")
-                .register(meterRegistry);
-
-        this.cacheUnavailable = Counter.builder("cache.unavailable")
-                .description("Number of times cache was unavailable due to circuit breaker/bulkhead")
-                .tag("cache", "summary")
-                .register(meterRegistry);
-
-        this.cacheGetTimer = Timer.builder("cache.get.duration")
-                .description("Cache get operation duration")
-                .tag("cache", "summary")
-                .register(meterRegistry);
-
-        this.cachePutTimer = Timer.builder("cache.put.duration")
-                .description("Cache put operation duration")
-                .tag("cache", "summary")
-                .register(meterRegistry);
+        this.metrics = metrics;
     }
 
     @CircuitBreaker(name = "redis", fallbackMethod = "getFallback")
@@ -82,10 +43,10 @@ public class CacheService {
         }
 
         try {
-            return cacheGetTimer.recordCallable(() -> getFromCache(key, type));
+            return metrics.recordGet(() -> getFromCache(key, type));
         } catch (Exception e) {
-            cacheErrors.increment();
-            log.warn("Cache get timer/metrics failed for key={}", key, e);
+            metrics.error();
+            log.warn("Cache get failed for key={}", key, e);
             return CacheResult.error(e);
         }
     }
@@ -95,33 +56,30 @@ public class CacheService {
             String value = redisTemplate.opsForValue().get(key);
 
             if (value == null) {
-                cacheMisses.increment();
+                metrics.miss();
                 return CacheResult.miss();
             }
 
             T result = objectMapper.readValue(value, type);
-            cacheHits.increment();
+            metrics.hit();
             return CacheResult.hit(result);
 
         } catch (JsonProcessingException e) {
-            cacheErrors.increment();
-            log.warn("Failed to deserialize cached value for key={}. Treating as cache ERROR.", key, e);
+            metrics.error();
+            log.warn("Failed to deserialize cached value for key={}", key, e);
             return CacheResult.error(e);
 
         } catch (Exception e) {
-            cacheErrors.increment();
-            log.warn("Unexpected redis/get error for key={}. Treating as cache ERROR.", key, e);
+            metrics.error();
+            log.warn("Unexpected redis/get error for key={}", key, e);
             return CacheResult.error(e);
         }
     }
 
-    /**
-     * Fallback for get (circuit open / bulkhead full).
-     */
     @SuppressWarnings("unused")
     public <T> CacheResult<T> getFallback(String key, Class<T> type, Throwable t) {
-        cacheUnavailable.increment();
-        log.warn("Redis get fallback triggered for key={}. Cache UNAVAILABLE.", key, t);
+        metrics.unavailable();
+        log.warn("Redis get fallback triggered for key={}", key, t);
         return CacheResult.error(t);
     }
 
@@ -132,22 +90,20 @@ public class CacheService {
             log.warn("Attempted to put cache with null/blank key");
             return;
         }
-
         if (value == null) {
             log.warn("Attempted to cache null value for key={}", key);
             return;
         }
-
         if (ttlSeconds <= 0) {
             log.warn("Invalid TTL={} seconds for key={}. Skipping cache put.", ttlSeconds, key);
             return;
         }
 
         try {
-            cachePutTimer.record(() -> putToCache(key, value, ttlSeconds));
+            metrics.recordPut(() -> putToCache(key, value, ttlSeconds));
         } catch (Exception e) {
-            cacheErrors.increment();
-            log.warn("Cache put timer/metrics failed for key={}. Put skipped.", key, e);
+            metrics.error();
+            log.warn("Cache put failed for key={}", key, e);
         }
     }
 
@@ -161,19 +117,19 @@ public class CacheService {
             log.debug("Cached key={} ttl={}s (original={}s)", key, jitteredTtl, ttlSeconds);
 
         } catch (JsonProcessingException e) {
-            cacheErrors.increment();
-            log.warn("Failed to serialize value for key={}. Cache put failed silently.", key, e);
+            metrics.error();
+            log.warn("Failed to serialize value for key={}", key, e);
 
         } catch (Exception e) {
-            cacheErrors.increment();
-            log.warn("Unexpected redis/put error for key={}. Cache put failed silently.", key, e);
+            metrics.error();
+            log.warn("Unexpected redis/put error for key={}", key, e);
         }
     }
 
     @SuppressWarnings("unused")
     public void putFallback(String key, Object value, long ttlSeconds, Throwable t) {
-        cacheUnavailable.increment();
-        log.warn("Redis put fallback triggered for key={}. Cache UNAVAILABLE.", key, t);
+        metrics.unavailable();
+        log.warn("Redis put fallback triggered for key={}", key, t);
     }
 
     @CircuitBreaker(name = "redis", fallbackMethod = "deleteFallback")
@@ -186,15 +142,15 @@ public class CacheService {
         try {
             redisTemplate.delete(key);
         } catch (Exception e) {
-            cacheErrors.increment();
-            log.warn("Unexpected redis/delete error for key={}. Delete failed silently.", key, e);
+            metrics.error();
+            log.warn("Unexpected redis/delete error for key={}", key, e);
         }
     }
 
     @SuppressWarnings("unused")
     public void deleteFallback(String key, Throwable t) {
-        cacheUnavailable.increment();
-        log.warn("Redis delete fallback triggered for key={}. Cache UNAVAILABLE.", key, t);
+        metrics.unavailable();
+        log.warn("Redis delete fallback triggered for key={}", key, t);
     }
 
     private long addJitter(long ttlSeconds) {

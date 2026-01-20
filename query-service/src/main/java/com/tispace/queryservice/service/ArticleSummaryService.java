@@ -4,6 +4,7 @@ import com.tispace.common.dto.ArticleDTO;
 import com.tispace.common.dto.SummaryDTO;
 import com.tispace.common.exception.BusinessException;
 import com.tispace.queryservice.cache.CacheResult;
+import com.tispace.queryservice.cache.CacheService;
 import com.tispace.queryservice.constants.ArticleConstants;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
