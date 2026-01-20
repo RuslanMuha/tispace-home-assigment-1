@@ -19,7 +19,7 @@ public class OpenApiConfig {
 				.version("v1.0")
 				.contact(new Contact()
 					.name("TISpace")
-					.email("support@tispace.com"))
+					.email("support@test.com"))
 				.license(new License()
 					.name("Apache 2.0")
 					.url("https://www.apache.org/licenses/LICENSE-2.0.html")));

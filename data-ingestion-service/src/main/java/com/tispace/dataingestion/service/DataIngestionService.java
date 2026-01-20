@@ -39,7 +39,6 @@ public class DataIngestionService {
 			return;
 		}
 
-		// Filter valid articles in single pass to avoid double iteration
 		List<Article> validArticles = new ArrayList<>(articles.size());
 		int skippedCount = 0;
 		

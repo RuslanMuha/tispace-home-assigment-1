@@ -7,7 +7,7 @@ public final class ArticleConstants {
 	}
 	
 	public static final String CACHE_KEY_PREFIX = "article:summary:";
-	public static final String SINGLE_FLIGHT_KEY_KEY_PREFIX = "sf:article:summary:";
+	public static final String SINGLE_FLIGHT_KEY_KEY_PREFIX = "singleflight:article:summary:";
 
 	public static String buildCacheKey(Long articleId) {
 		return CACHE_KEY_PREFIX + articleId;
