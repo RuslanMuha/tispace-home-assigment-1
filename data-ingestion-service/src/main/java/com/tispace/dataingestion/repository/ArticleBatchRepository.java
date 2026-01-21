@@ -12,8 +12,21 @@ import java.sql.*;
 import java.util.List;
 
 /**
- * Repository for batch operations on articles using JPA native queries for better performance.
+ * Repository for batch operations on articles using JDBC batch inserts for performance.
  * Uses PostgreSQL ON CONFLICT DO NOTHING to handle duplicates efficiently.
+ * 
+ * <p>Deduplication: Uses title as unique constraint (ON CONFLICT (title) DO NOTHING).
+ * Duplicate articles are silently skipped (no error thrown).
+ * 
+ * <p>Batch processing: Processes articles in batches of 50 for optimal performance.
+ * This matches Hibernate batch_size configuration.
+ * 
+ * <p>Guarantees: Only new articles (by title) are inserted. Duplicates are ignored.
+ * Returns count of actually inserted articles (not total processed).
+ * 
+ * <p>Side effects: Database writes, transaction (method is @Transactional).
+ * 
+ * <p>Thread safety: Safe for concurrent calls (PostgreSQL handles concurrent inserts).
  */
 @Repository
 @RequiredArgsConstructor
@@ -27,6 +40,14 @@ public class ArticleBatchRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * Batch inserts articles, ignoring duplicates based on title.
+     * 
+     * @param articles list of articles to insert (null/empty returns 0)
+     * @return number of actually inserted articles (duplicates not counted)
+     * 
+     * <p>Side effects: Database batch INSERT operations, transaction commit.
+     */
     @Transactional
     public int batchInsertIgnoreDuplicates(List<Article> articles) {
         if (articles == null || articles.isEmpty()) {

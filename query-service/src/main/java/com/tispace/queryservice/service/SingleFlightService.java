@@ -20,6 +20,30 @@ import java.util.concurrent.TimeUnit;
 /**
  * Service implementing single-flight pattern to prevent stampede/thundering herd.
  * Uses distributed lock via Redis as primary mechanism, falls back to in-memory single-flight.
+ * 
+ * <p>Pattern: When multiple requests arrive for the same key simultaneously, only one (leader)
+ * executes the operation. Others (followers) wait for the result.
+ * 
+ * <p>Mechanism:
+ * <ul>
+ *   <li>Leader: Acquires Redis lock, executes operation, stores result in Redis, releases lock</li>
+ *   <li>Followers: Wait for result in Redis with exponential backoff polling</li>
+ *   <li>Fallback: If Redis fails, uses in-memory ConcurrentHashMap (single-instance only)</li>
+ * </ul>
+ * 
+ * <p>Guarantees: Only one operation executes per key at a time (across all instances).
+ * Results are cached in Redis for followers to retrieve.
+ * 
+ * <p>Edge cases:
+ * <ul>
+ *   <li>Redis unavailable → falls back to in-memory (single-instance protection only)</li>
+ *   <li>Leader failure → stores error envelope, followers fail fast</li>
+ *   <li>Timeout → throws ExternalApiException</li>
+ * </ul>
+ * 
+ * <p>Side effects: Redis operations (lock acquisition, result storage), in-memory state.
+ * 
+ * <p>Thread safety: Safe for concurrent calls (Redis handles distributed locking).
  */
 @Service
 @RequiredArgsConstructor
@@ -46,6 +70,19 @@ public class SingleFlightService implements SingleFlightExecutor {
             Long.class
     );
 
+    /**
+     * Executes operation with single-flight protection.
+     * Only one instance executes per key, others wait for result.
+     * 
+     * @param key unique operation key (null/empty throws IllegalArgumentException)
+     * @param resultType expected result type (null throws IllegalArgumentException)
+     * @param operation operation to execute (only called once per key)
+     * @return operation result (shared by all concurrent callers)
+     * 
+     * @throws IllegalArgumentException if key or resultType is null/empty
+     * @throws ExternalApiException if operation fails, timeout, or Redis error during wait
+     * @throws Exception if operation throws (propagated to all waiters)
+     */
     @Override
     public <T> T execute(String key, Class<T> resultType, SingleFlightOperation<T> operation) throws Exception {
         if (key == null || key.isBlank()) {

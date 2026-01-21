@@ -20,6 +20,25 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Core implementation for NewsAPI integration.
+ * Handles HTTP requests, JSON parsing, and article mapping/validation.
+ * 
+ * <p>Validation: Only articles passing ArticleValidator are returned.
+ * Invalid articles are silently skipped (no exceptions thrown).
+ * 
+ * <p>Error handling:
+ * <ul>
+ *   <li>Transport errors → ExternalApiException</li>
+ *   <li>Non-2xx HTTP → ExternalApiException</li>
+ *   <li>JSON parsing errors → SerializationException</li>
+ *   <li>NewsAPI status != "ok" → ExternalApiException</li>
+ * </ul>
+ * 
+ * <p>Side effects: External HTTP calls to NewsAPI.
+ * 
+ * <p>Constraints: apiKey must be configured at startup (throws IllegalStateException if missing).
+ */
 @Service
 @Slf4j
 public class NewsApiClientCore {
@@ -51,6 +70,16 @@ public class NewsApiClientCore {
         }
     }
 
+    /**
+     * Fetches and processes articles from NewsAPI.
+     * 
+     * @param keyword search keyword (optional, can be null/empty)
+     * @param category category to assign to articles (not used in API query, only for mapping)
+     * @return list of valid articles (empty if API returns no articles or all are invalid)
+     * 
+     * @throws ExternalApiException if HTTP call fails, non-2xx response, or NewsAPI status != "ok"
+     * @throws SerializationException if JSON parsing fails
+     */
     public List<Article> fetchArticles(String keyword, String category) {
         String url = buildUrl(keyword);
 

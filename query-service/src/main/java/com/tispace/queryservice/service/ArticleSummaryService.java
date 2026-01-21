@@ -82,6 +82,10 @@ public class ArticleSummaryService {
 
     /**
      * Gets summary with single-flight protection to prevent concurrent generation.
+     * Implements double-check locking: checks cache again after acquiring single-flight lock.
+     * 
+     * <p>This prevents race condition where multiple threads miss cache simultaneously
+     * and all try to generate summary concurrently.
      */
     private SummaryDTO getSummaryWithSingleFlight(UUID articleId, ArticleDTO article, String cacheKey) {
         String singleFlightKey = ArticleConstants.buildSingleFlightKey(cacheKey);
@@ -140,7 +144,9 @@ public class ArticleSummaryService {
 
     /**
      * Caches the summary with configured TTL.
-     * Fails silently if caching fails - cache is optional.
+     * Fails silently if caching fails - cache is optional and shouldn't break business logic.
+     * 
+     * <p>TTL is enforced to be at least 1 hour (safety constraint).
      */
     private void cacheSummary(String cacheKey, SummaryDTO summaryDTO) {
 

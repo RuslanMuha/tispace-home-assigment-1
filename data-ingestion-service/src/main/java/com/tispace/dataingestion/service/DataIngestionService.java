@@ -10,6 +10,18 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Orchestrates data ingestion from external APIs and persistence to database.
+ * Handles validation, filtering, and deduplication of articles before saving.
+ * 
+ * <p>Side effects: Makes external API calls, writes to database via ArticlePersistenceService.
+ * 
+ * <p>Guarantees: Only valid articles (non-null, non-empty title) are persisted.
+ * Duplicates are handled by ArticlePersistenceService using ON CONFLICT.
+ * 
+ * <p>Edge cases: Empty API responses are handled gracefully (returns early).
+ * Invalid articles are skipped with warning logs.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -24,6 +36,15 @@ public class DataIngestionService {
 	@Value("${scheduler.category:technology}")
 	private String defaultCategory;
 
+	/**
+	 * Ingests articles from external API and saves them to database.
+	 * Uses default keyword/category if parameters are null or empty.
+	 * 
+	 * @param keyword search keyword (falls back to default if empty)
+	 * @param category article category (falls back to default if empty)
+	 * 
+	 * @throws ExternalApiException if external API call fails (propagated from ExternalApiClient)
+	 */
 	public void ingestData(String keyword, String category) {
 		log.info("Starting data ingestion with keyword: {}, category: {}", keyword, category);
 		

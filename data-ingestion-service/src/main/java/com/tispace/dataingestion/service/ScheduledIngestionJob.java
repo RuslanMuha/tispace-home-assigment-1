@@ -14,6 +14,24 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.Optional;
 
+/**
+ * Scheduled job for periodic data ingestion with distributed locking.
+ * Prevents concurrent execution across multiple service instances.
+ * 
+ * <p>Startup behavior: Checks if database is empty or data is stale (>24h).
+ * Runs initial ingestion if needed to avoid cold start delays.
+ * 
+ * <p>Distributed locking: Uses PostgreSQL advisory locks to ensure only one instance
+ * executes the job in multi-instance deployments. Other instances skip execution silently.
+ * 
+ * <p>Schedule: Configurable via scheduler.cron (default: every 6 hours).
+ * Can be disabled via scheduler.enabled=false.
+ * 
+ * <p>Side effects: External API calls, database writes, distributed lock acquisition.
+ * 
+ * <p>Error handling: Job failures are logged but don't crash the application.
+ * Lock acquisition failures are handled gracefully (job skipped).
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -26,6 +44,13 @@ public class ScheduledIngestionJob {
 	
 	private static final Duration DATA_STALENESS_THRESHOLD = Duration.ofHours(24);
 	
+	/**
+	 * Runs on application startup to check if initial data ingestion is needed.
+	 * Triggers ingestion if database is empty or last article is older than threshold.
+	 * 
+	 * <p>This ensures fresh data on startup without waiting for first scheduled run.
+	 * Errors are logged but don't prevent application startup.
+	 */
 	@EventListener(ApplicationReadyEvent.class)
 	public void onApplicationReady() {
 		log.info("Checking if initial data ingestion is needed on startup");
@@ -55,6 +80,20 @@ public class ScheduledIngestionJob {
 		}
 	}
 	
+	/**
+	 * Scheduled data ingestion job executed periodically.
+	 * Uses distributed lock to prevent concurrent execution across instances.
+	 * 
+	 * <p>If lock is acquired: executes ingestion and releases lock on completion/failure.
+	 * If lock is not acquired: skips execution (another instance is running).
+	 * 
+	 * <p>Schedule: Configured via scheduler.cron (default: every 6 hours at minute 0).
+	 * 
+	 * <p>Side effects: External API calls, database writes, distributed lock operations.
+	 * 
+	 * <p>Error handling: Ingestion failures are logged and rethrown (causes lock release).
+	 * Lock acquisition failures are handled gracefully (returns false, job skipped).
+	 */
 	@Scheduled(cron = "${scheduler.cron:0 0 */6 * * *}", zone = "UTC")
 	public void scheduledDataIngestion() {
 		log.info("Attempting to acquire distributed lock for scheduled data ingestion job");
