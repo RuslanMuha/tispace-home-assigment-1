@@ -1,7 +1,6 @@
 package com.tispace.common.validation;
 
 import com.tispace.common.exception.BusinessException;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
