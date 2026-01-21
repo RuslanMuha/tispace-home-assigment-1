@@ -84,17 +84,11 @@ public class ArticleController implements ArticleApiDoc {
 		
 		log.debug("Fetching summary for article with id: {}", id);
 		
-		// Get article first
 		ArticleDTO article = articleQueryService.getArticleDTOById(id);
-		
-		// Get summary from query-service
 		SummaryDTO summary = queryServiceClient.getArticleSummary(id, article);
 		return ResponseEntity.ok(summary);
 	}
 	
-	/**
-	 * Fallback method for rate limit exceeded on getArticles endpoint.
-	 */
 	@SuppressWarnings("unused")
     private ResponseEntity<Page<ArticleDTO>> getArticlesRateLimitFallback(
             Integer page, Integer size, String sort, String category, RequestNotPermitted e) {
@@ -103,18 +97,12 @@ public class ArticleController implements ArticleApiDoc {
     }
 
 
-	/**
-	 * Fallback method for rate limit exceeded on getArticleById endpoint.
-	 */
 	@SuppressWarnings("unused")
     private ResponseEntity<ArticleDTO> getArticleByIdRateLimitFallback(UUID id, RequestNotPermitted e) {
         log.warn("Rate limit exceeded for getArticleById. id={}", id);
         return ResponseEntity.status(429).build();
     }
 
-	/**
-	 * Fallback method for rate limit exceeded on getArticleSummary endpoint.
-	 */
 	@SuppressWarnings("unused")
     private ResponseEntity<SummaryDTO> getArticleSummaryRateLimitFallback(UUID id, RequestNotPermitted e) {
         log.warn("Rate limit exceeded for getArticleSummary. id={}", id);

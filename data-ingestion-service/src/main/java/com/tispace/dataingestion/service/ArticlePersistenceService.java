@@ -9,9 +9,8 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 
 /**
- * Service for persisting articles to database.
- * Uses batch UPSERT operations with PostgreSQL ON CONFLICT DO NOTHING
- * for efficient handling of duplicates in multi-instance environment.
+ * Persists articles using batch UPSERT with ON CONFLICT DO NOTHING.
+ * Handles duplicates efficiently in multi-instance deployments.
  */
 @Service
 @RequiredArgsConstructor

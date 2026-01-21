@@ -8,11 +8,6 @@ import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
-/**
- * Configuration for RestTemplate.
- * Bulkhead isolation is handled by Resilience4j @Bulkhead annotation.
- * Note: NewsAPI uses query parameters for API key, not headers.
- */
 @Configuration
 public class RestTemplateConfig {
 

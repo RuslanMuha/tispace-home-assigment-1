@@ -20,22 +20,8 @@ import org.springframework.web.client.RestTemplate;
 import java.util.UUID;
 
 /**
- * Client for internal query-service communication with resilience patterns.
- * Protects against service unavailability and overload.
- * 
- * <p>Resilience patterns:
- * <ul>
- *   <li>Circuit breaker: Opens after threshold failures</li>
- *   <li>Retry: Retries transient failures</li>
- *   <li>Bulkhead: Limits concurrent requests (thread pool isolation)</li>
- * </ul>
- * 
- * <p>Fallback behavior: Returns degraded response (stub summary) instead of throwing exception
- * for better user experience. Rate limit and bulkhead failures still throw exceptions.
- * 
- * <p>Side effects: Internal HTTP calls, metrics recording.
- * 
- * <p>Authentication: Requires INTERNAL_API_TOKEN header (configured in RestTemplate).
+ * Internal query-service client with circuit breaker, retry, and bulkhead.
+ * Returns degraded summary on circuit breaker failures; throws on rate limit/bulkhead.
  */
 @Component
 @RequiredArgsConstructor
@@ -49,16 +35,6 @@ public class QueryServiceClient {
 	
 	private static final String SUMMARY_ENDPOINT = "/internal/summary";
 	
-	/**
-	 * Gets article summary from query-service with resilience patterns.
-	 * 
-	 * @param articleId article UUID
-	 * @param article article data (sent in request body)
-	 * @return summary DTO (may be degraded response on fallback)
-	 * 
-	 * @throws ExternalApiException if rate limit exceeded, bulkhead full, or null/empty response
-	 *         (circuit breaker failures return degraded response, not exception)
-	 */
 	@CircuitBreaker(name = "queryService", fallbackMethod = "getArticleSummaryFallback")
 	@Retry(name = "queryService")
 	@Bulkhead(name = "queryService", type = Bulkhead.Type.THREADPOOL, fallbackMethod = "getArticleSummaryFallback")
@@ -87,23 +63,8 @@ public class QueryServiceClient {
 	}
 	
 	/**
-	 * Fallback method invoked by Resilience4j when circuit breaker is open,
-	 * bulkhead is full, or all retries are exhausted.
-	 * 
-	 * <p>Behavior:
-	 * <ul>
-	 *   <li>Rate limit exceeded → throws ExternalApiException</li>
-	 *   <li>Bulkhead full → throws ExternalApiException</li>
-	 *   <li>Circuit breaker open / connection errors → returns degraded response (stub summary)</li>
-	 * </ul>
-	 * 
-	 * <p>This method is called by Resilience4j framework, not directly.
-	 * 
-	 * @param articleId article UUID
-	 * @param article article data (unused in fallback)
-	 * @param e exception that triggered fallback
-	 * @return degraded summary DTO (for circuit breaker) or throws (for rate limit/bulkhead)
-	 * @throws ExternalApiException for rate limit or bulkhead failures
+	 * Fallback: returns degraded summary on circuit breaker failures.
+	 * Throws on rate limit/bulkhead failures. Called by Resilience4j, not directly.
 	 */
 	@SuppressWarnings("unused")
 	private SummaryDTO getArticleSummaryFallback(UUID articleId, ArticleDTO article, Exception e) {
@@ -122,7 +83,6 @@ public class QueryServiceClient {
 		log.error("Query-service circuit breaker is open or service unavailable. Article id: {}. Error: {}", 
 			articleId, e != null ? e.getMessage() : "Unknown error", e);
 		
-		// Return a stub summary instead of throwing exception for better user experience
 		return SummaryDTO.builder()
 			.articleId(articleId)
 			.summary("Summary generation is temporarily unavailable. Please try again later.")

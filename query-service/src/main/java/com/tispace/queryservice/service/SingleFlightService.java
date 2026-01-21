@@ -18,32 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Service implementing single-flight pattern to prevent stampede/thundering herd.
- * Uses distributed lock via Redis as primary mechanism, falls back to in-memory single-flight.
- * 
- * <p>Pattern: When multiple requests arrive for the same key simultaneously, only one (leader)
- * executes the operation. Others (followers) wait for the result.
- * 
- * <p>Mechanism:
- * <ul>
- *   <li>Leader: Acquires Redis lock, executes operation, stores result in Redis, releases lock</li>
- *   <li>Followers: Wait for result in Redis with exponential backoff polling</li>
- *   <li>Fallback: If Redis fails, uses in-memory ConcurrentHashMap (single-instance only)</li>
- * </ul>
- * 
- * <p>Guarantees: Only one operation executes per key at a time (across all instances).
- * Results are cached in Redis for followers to retrieve.
- * 
- * <p>Edge cases:
- * <ul>
- *   <li>Redis unavailable → falls back to in-memory (single-instance protection only)</li>
- *   <li>Leader failure → stores error envelope, followers fail fast</li>
- *   <li>Timeout → throws ExternalApiException</li>
- * </ul>
- * 
- * <p>Side effects: Redis operations (lock acquisition, result storage), in-memory state.
- * 
- * <p>Thread safety: Safe for concurrent calls (Redis handles distributed locking).
+ * Single-flight pattern: only one operation executes per key, others wait for result.
+ * Uses Redis distributed lock; falls back to in-memory if Redis fails (single-instance only).
+ * Leader stores result in Redis; followers poll with exponential backoff.
  */
 @Service
 @RequiredArgsConstructor
@@ -57,10 +34,7 @@ public class SingleFlightService implements SingleFlightExecutor {
     private final ObjectMapper objectMapper;
     private final SingleFlightProperties singleFlightProperties;
 
-    // local fallback
     private final ConcurrentHashMap<String, CompletableFuture<?>> inFlightRequests = new ConcurrentHashMap<>();
-
-    // Lua: delete only if token matches
     private static final DefaultRedisScript<Long> RELEASE_LOCK_SCRIPT = new DefaultRedisScript<>(
             "if redis.call('get', KEYS[1]) == ARGV[1] then " +
                     "  return redis.call('del', KEYS[1]) " +
@@ -70,19 +44,6 @@ public class SingleFlightService implements SingleFlightExecutor {
             Long.class
     );
 
-    /**
-     * Executes operation with single-flight protection.
-     * Only one instance executes per key, others wait for result.
-     * 
-     * @param key unique operation key (null/empty throws IllegalArgumentException)
-     * @param resultType expected result type (null throws IllegalArgumentException)
-     * @param operation operation to execute (only called once per key)
-     * @return operation result (shared by all concurrent callers)
-     * 
-     * @throws IllegalArgumentException if key or resultType is null/empty
-     * @throws ExternalApiException if operation fails, timeout, or Redis error during wait
-     * @throws Exception if operation throws (propagated to all waiters)
-     */
     @Override
     public <T> T execute(String key, Class<T> resultType, SingleFlightOperation<T> operation) throws Exception {
         if (key == null || key.isBlank()) {
@@ -95,7 +56,6 @@ public class SingleFlightService implements SingleFlightExecutor {
         String lockKey = LOCK_PREFIX + key;
         String resultKey = RESULT_PREFIX + key;
 
-        // lock ttl must cover wait time (+ small buffer)
         long lockSeconds = Math.max(
                 singleFlightProperties.getLockTimeoutSeconds(),
                 singleFlightProperties.getInFlightTimeoutSeconds() + 5
@@ -105,17 +65,14 @@ public class SingleFlightService implements SingleFlightExecutor {
 
         String token = UUID.randomUUID().toString();
 
-        // fast-path: if leader already stored envelope
         try {
             SingleFlightEnvelope cached = readEnvelope(resultKey);
             if (cached != null) {
                 return unwrapEnvelope(resultKey, cached, resultType);
             }
         } catch (ExternalApiException e) {
-            // This is NOT a Redis failure and MUST be propagated (tests expect this).
             throw e;
         } catch (Exception e) {
-            // fallback only on real Redis/serialization issues
             log.warn("Redis read failed for resultKey={}, fallback to in-memory single-flight", resultKey, e);
             return executeWithInMemorySingleFlight(key, operation);
         }
@@ -123,11 +80,9 @@ public class SingleFlightService implements SingleFlightExecutor {
         Boolean acquired = tryAcquireLock(lockKey, token, lockTtl);
 
         if (Boolean.TRUE.equals(acquired)) {
-            // leader path
             try {
                 T result = operation.execute();
 
-                // store SUCCESS envelope for followers
                 safeWriteEnvelope(
                         resultKey,
                         new SingleFlightEnvelope(true, objectMapper.writeValueAsString(result), null, null),
@@ -136,7 +91,6 @@ public class SingleFlightService implements SingleFlightExecutor {
 
                 return result;
             } catch (Exception leaderError) {
-                // store FAILURE envelope so followers fail fast
                 safeWriteEnvelope(
                         resultKey,
                         new SingleFlightEnvelope(false, null, mapErrorCode(leaderError), safeMessage(leaderError)),
@@ -149,15 +103,11 @@ public class SingleFlightService implements SingleFlightExecutor {
             }
         }
 
-        // follower path: wait for envelope with backoff polling
         try {
             return waitForEnvelopeWithBackoff(resultKey, resultType);
         } catch (ExternalApiException e) {
-            // If the envelope indicates error OR is malformed (missing payload),
-            // it's a valid single-flight failure and must NOT fallback to in-memory.
             throw e;
         } catch (Exception waitError) {
-            //fallback only for Redis waiting failures (timeouts, redis errors, etc.)
             log.warn("Failed waiting for resultKey={}, fallback to in-memory", resultKey, waitError);
             return executeWithInMemorySingleFlight(key, operation);
         }
@@ -178,12 +128,10 @@ public class SingleFlightService implements SingleFlightExecutor {
             try {
                 env = readEnvelope(resultKey);
             } catch (Exception redisErr) {
-                // real Redis error while waiting -> caller may choose fallback
                 throw new ExternalApiException("Redis error while waiting for resultKey=" + resultKey, redisErr);
             }
 
             if (env != null) {
-                // If env indicates error / missing payload -> unwrapEnvelope throws ExternalApiException
                 return unwrapEnvelope(resultKey, env, resultType);
             }
 
@@ -195,7 +143,6 @@ public class SingleFlightService implements SingleFlightExecutor {
 
             Thread.sleep(actualSleepMs);
 
-            // exponential backoff up to max
             long next = sleepMs * Math.max(1, singleFlightProperties.getPollMultiplier());
             sleepMs = Math.min(Math.max(1, singleFlightProperties.getPollMaxMs()), next);
         }
@@ -213,7 +160,6 @@ public class SingleFlightService implements SingleFlightExecutor {
         try {
             redis.opsForValue().set(resultKey, objectMapper.writeValueAsString(envelope), ttl);
         } catch (Exception e) {
-            // caching failure shouldn't break business logic
             log.warn("Failed to store single-flight envelope for resultKey={}", resultKey, e);
         }
     }

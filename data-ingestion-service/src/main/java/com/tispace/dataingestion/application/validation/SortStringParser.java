@@ -8,16 +8,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * Parser for sort query parameter in format: "field,direction".
- *
- * Responsibilities:
- * - Provide default sort when input is null/blank
- * - Validate format (must contain exactly one comma)
- * - Validate allowed sort fields (whitelist)
- * - Validate direction (asc/desc)
- *
- * Note:
- * Controller can keep only @Size(max=...) validation and delegate logic here.
+ * Parses sort query parameter ("field,direction") with whitelist validation.
+ * Rejects invalid fields/directions to prevent unsafe SQL.
  */
 @Component
 public class SortStringParser {
@@ -36,13 +28,6 @@ public class SortStringParser {
             .sorted()
             .collect(Collectors.joining(", "));
 
-    /**
-     * Parses sort string into Spring Sort.
-     *
-     * @param sortString format: "field,direction" (e.g., "publishedAt,desc")
-     * @return Sort instance
-     * @throws BusinessException when invalid input
-     */
     public Sort parse(String sortString) {
         if (sortString == null || sortString.isBlank()) {
             return defaultSort();
@@ -66,7 +51,6 @@ public class SortStringParser {
             throw new BusinessException("Sort parameter must be in format 'field,direction' (e.g., 'publishedAt,desc')");
         }
 
-        // Ensure we have exactly one comma (no "a,b,c")
         if (sortString.indexOf(',', commaIndex + 1) != -1) {
             throw new BusinessException("Sort parameter must contain exactly one comma: 'field,direction'");
         }
@@ -103,10 +87,6 @@ public class SortStringParser {
         return Sort.by(DEFAULT_SORT_DIRECTION, DEFAULT_SORT_FIELD);
     }
 
-    /**
-     * Small internal value-object for parsing result.
-     * Keeps parsing logic readable and testable.
-     */
     private record ParsedSort(String field, String direction) {}
 }
 

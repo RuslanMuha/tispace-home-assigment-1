@@ -28,13 +28,12 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.LocalDateTime;
 
-@RestControllerAdvice(basePackages = "com.tispace.dataingestion.controller") // Only apply to our controllers, not SpringDoc
-@Order(Ordered.LOWEST_PRECEDENCE) // Lowest priority to let SpringDoc handle its own exceptions first
-@Hidden // Exclude from SpringDoc/OpenAPI scanning to avoid compatibility issues
+@RestControllerAdvice(basePackages = "com.tispace.dataingestion.controller")
+@Order(Ordered.LOWEST_PRECEDENCE)
+@Hidden
 @Slf4j
 public class GlobalExceptionHandler {
 	
-	// URI and path constants
 	private static final String URI_PREFIX = "uri=";
 	private static final String UNKNOWN_PATH = "unknown";
 	private static final String FAVICON_PATH = "favicon.ico";
@@ -42,14 +41,12 @@ public class GlobalExceptionHandler {
 	private static final String SPRINGDOC_SWAGGER_UI_PATH = "/swagger-ui";
 	private static final String SPRINGDOC_SWAGGER_UI_HTML_PATH = "/swagger-ui.html";
 	
-	// Error messages
 	private static final String VALIDATION_FAILED_MESSAGE = "Validation failed";
 	private static final String UNEXPECTED_ERROR_MESSAGE = "An unexpected error occurred";
 	private static final String INVALID_ARGUMENT_MESSAGE = "Invalid argument provided";
 	private static final String HTTP_ERROR_MESSAGE = "HTTP error occurred";
 	private static final String UNKNOWN_ERROR_MESSAGE = "Unknown error";
 	
-	// Error codes
 	private static final String ERROR_CODE_NOT_FOUND = "NOT_FOUND";
 	private static final String ERROR_CODE_EXTERNAL_API_ERROR = "EXTERNAL_API_ERROR";
 	private static final String ERROR_CODE_CONNECTION_ERROR = "CONNECTION_ERROR";
@@ -64,17 +61,14 @@ public class GlobalExceptionHandler {
 	private static final String ERROR_CODE_INVALID_ARGUMENT = "INVALID_ARGUMENT";
 	private static final String ERROR_CODE_INTERNAL_ERROR = "INTERNAL_ERROR";
 	
-	// Message patterns for data integrity violations
 	private static final String PATTERN_DUPLICATE = "duplicate";
 	private static final String PATTERN_UNIQUE_CONSTRAINT = "unique constraint";
 	private static final String PATTERN_FOREIGN_KEY = "foreign key";
 	private static final String PATTERN_REFERENTIAL_INTEGRITY = "referential integrity";
 	
-	// Connection error patterns
 	private static final String PATTERN_TIMEOUT = "timeout";
 	private static final String PATTERN_CONNECTION_REFUSED = "Connection refused";
 	
-	// Message limits
 	private static final int MAX_MESSAGE_LENGTH = 200;
 	private static final String MESSAGE_TRUNCATION_SUFFIX = "...";
 	
@@ -157,7 +151,6 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(CacheException.class)
 	public ResponseEntity<ErrorResponseDTO> handleCacheException(CacheException ex, WebRequest request) {
 		log.warn("Cache error: {}", ex.getMessage());
-		// Cache failures should not break the application - return a degraded response
 		return buildErrorResponse(ERROR_CODE_CACHE_UNAVAILABLE, "Cache service is temporarily unavailable", HttpStatus.SERVICE_UNAVAILABLE, request);
 	}
 	
@@ -187,7 +180,6 @@ public class GlobalExceptionHandler {
 			.reduce((a, b) -> String.format("%s, %s", a, b))
 			.orElse(VALIDATION_FAILED_MESSAGE);
 		
-		// If no field errors, use the exception message if available
 		if (VALIDATION_FAILED_MESSAGE.equals(message)) {
             message = ex.getMessage();
         }
@@ -206,13 +198,11 @@ public class GlobalExceptionHandler {
 	public ResponseEntity<?> handleNoResourceFoundException(NoResourceFoundException ex, WebRequest request) {
 		String path = extractPath(request);
 		
-		// Ignore favicon.ico requests - they are automatically requested by browsers
 		if (path.contains(FAVICON_PATH)) {
 			log.debug("Favicon not found: {}", path);
 			return ResponseEntity.notFound().build();
 		}
 		
-		// Ignore SpringDoc/OpenAPI paths - let SpringDoc handle them
 		if (isSpringDocPath(path)) {
 			log.debug("SpringDoc path not found: {}", path);
 			return ResponseEntity.notFound().build();
@@ -224,7 +214,6 @@ public class GlobalExceptionHandler {
 	
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ErrorResponseDTO> handleGenericException(Exception ex, WebRequest request) {
-		// Don't expose full exception details to client for security
 		String errorMessage = truncateMessage(ex.getMessage());
 		
 		log.error("Unexpected error: {}", errorMessage != null ? errorMessage : UNKNOWN_ERROR_MESSAGE, ex);
@@ -253,24 +242,17 @@ public class GlobalExceptionHandler {
 			try {
 				log.warn("Failed to extract path from request", e);
 			} catch (Exception logException) {
-				// Ignore logging exceptions to ensure we always return UNKNOWN_PATH
 			}
 			return UNKNOWN_PATH;
 		}
 	}
 	
-	/**
-	 * Checks if the given path is a SpringDoc/OpenAPI path that should be ignored.
-	 */
 	private boolean isSpringDocPath(String path) {
 		return path.contains(SPRINGDOC_API_DOCS_PATH) 
 			|| path.contains(SPRINGDOC_SWAGGER_UI_PATH) 
 			|| path.contains(SPRINGDOC_SWAGGER_UI_HTML_PATH);
 	}
 	
-	/**
-	 * Truncates a message to the maximum allowed length for security purposes.
-	 */
 	private String truncateMessage(String message) {
 		if (message == null) {
 			return null;
@@ -310,21 +292,12 @@ public class GlobalExceptionHandler {
 		return HTTP_ERROR_MESSAGE;
 	}
 	
-	/**
-	 * Sanitizes a message by masking sensitive data and truncating if necessary.
-	 * 
-	 * @param message the message to sanitize
-	 * @return the sanitized message
-	 */
 	private String sanitizeMessage(String message) {
 		if (message == null) {
 			return null;
 		}
 		
-		// First mask sensitive data
 		String masked = SensitiveDataFilter.maskSensitiveData(message);
-		
-		// Then truncate if too long
 		return truncateMessage(masked);
 	}
 }

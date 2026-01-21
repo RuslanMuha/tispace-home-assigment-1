@@ -21,26 +21,8 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * Service for generating article summaries using OpenAI ChatGPT API.
- * Handles API unavailability gracefully with mock summaries.
- * 
- * <p>Resilience patterns:
- * <ul>
- *   <li>Circuit breaker: Opens after threshold failures</li>
- *   <li>Retry: Retries transient failures</li>
- * </ul>
- * 
- * <p>Fallback behavior: Returns mock summary when:
- * <ul>
- *   <li>OpenAI API key is not configured (openAiService is null)</li>
- *   <li>Circuit breaker is open</li>
- *   <li>All retries are exhausted</li>
- *   <li>Prompt generation fails</li>
- * </ul>
- * 
- * <p>Side effects: External HTTP calls to OpenAI API, metrics recording.
- * 
- * <p>Constraints: Model name configurable via openai.model (default: gpt-3.5-turbo).
+ * Generates article summaries via OpenAI ChatGPT API.
+ * Falls back to mock summary if API key is missing, circuit breaker is open, or retries exhausted.
  */
 @Service
 @Slf4j
@@ -52,19 +34,9 @@ public class ChatGptService {
 	private String model;
 	
 	public ChatGptService(ObjectProvider<OpenAiService> openAiServiceProvider) {
-		this.openAiService = openAiServiceProvider.getIfAvailable(); // Can be null if OpenAI API key is not configured
+		this.openAiService = openAiServiceProvider.getIfAvailable();
     }
 	
-	/**
-	 * Generates summary for article using OpenAI ChatGPT API.
-	 * Falls back to mock summary if API is unavailable or unconfigured.
-	 * 
-	 * @param article article data (validated before processing)
-	 * @return generated summary text (or mock summary on fallback)
-	 * 
-	 * @throws IllegalArgumentException if article validation fails
-	 * @throws ExternalApiException if API returns invalid response structure
-	 */
 	@CircuitBreaker(name = "openAiApi", fallbackMethod = "generateSummaryFallback")
 	@Retry(name = "openAiApi")
 	public String generateSummary(ArticleDTO article) {
@@ -91,9 +63,6 @@ public class ChatGptService {
 		return extractContent(completion, article.getId());
 	}
 
-	/**
-	 * Builds ChatGPT completion request.
-	 */
 	private ChatCompletionRequest buildRequest(String prompt) {
 		List<ChatMessage> messages = new ArrayList<>();
 		messages.add(new ChatMessage(ChatMessageRole.SYSTEM.value(), 
@@ -108,9 +77,6 @@ public class ChatGptService {
 			.build();
 	}
 	
-	/**
-	 * Extracts content from ChatGPT completion response.
-	 */
 	private String extractContent(ChatCompletionResult completion, UUID articleId) {
 		if (completion == null) {
 			log.error("OpenAI API returned null completion for article id: {}", articleId);
@@ -153,7 +119,6 @@ public class ChatGptService {
 		}
 		
 		if (article.getDescription() != null && !article.getDescription().isEmpty()) {
-			// Extract first sentence or first 150 characters from description
 			String descriptionPreview = article.getDescription().length() > 150 
 				? String.format("%s...", article.getDescription().substring(0, 150))
 				: article.getDescription();
@@ -165,19 +130,12 @@ public class ChatGptService {
 	}
 	
 	/**
-	 * Fallback method invoked by Resilience4j when circuit breaker is open or all retries exhausted.
-	 * Returns mock summary to allow system to continue operating.
-	 * 
-	 * <p>This method is called by Resilience4j framework, not directly.
-	 * 
-	 * @param article article data (may be null)
-	 * @param e exception that triggered fallback
-	 * @return mock summary text
+	 * Fallback: returns mock summary when OpenAI API is unavailable.
+	 * Called by Resilience4j, not directly.
 	 */
 	public String generateSummaryFallback(ArticleDTO article, Exception e) {
 		log.error("OpenAI API circuit breaker is open or service unavailable. Using fallback for article id: {}", 
 			article != null ? article.getId() : "unknown", e);
-		// Return mock summary as fallback when API is unavailable
 		return generateMockSummary(article);
 	}
 }

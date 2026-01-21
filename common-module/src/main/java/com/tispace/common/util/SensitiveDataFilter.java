@@ -6,13 +6,9 @@ import java.util.Set;
 import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 
-/**
- * Utility class for filtering sensitive data from logs and error messages.
- */
 public final class SensitiveDataFilter {
 
     private SensitiveDataFilter() {
-        // utility
     }
 
     private static final String MASKED_VALUE = "***";
@@ -34,18 +30,6 @@ public final class SensitiveDataFilter {
             .reduce((a, b) -> a + "|" + b)
             .orElseThrow();
 
-    /**
-     * Groups:
-     *  1 - key (may be quoted)
-     *  2 - separator (":" or "=")
-     *  3 - optional opening quote
-     *  4 - value (may contain spaces)
-     *  5 - optional closing quote
-     *
-     * Value stops at:
-     *  - comma / semicolon / } / " / end
-     *  - OR before " <nextSensitiveKey>[:=]"
-     */
     private static final Pattern SENSITIVE_PATTERN = Pattern.compile(
             "(?i)" +
                     "(\"?(?:" + KEYS + ")\"?)" +          // (1) key
@@ -67,7 +51,7 @@ public final class SensitiveDataFilter {
 
         var matcher = SENSITIVE_PATTERN.matcher(message);
         if (!matcher.find()) {
-            return message; // fast-path
+            return message;
         }
 
         return matcher.replaceAll(SensitiveDataFilter::replacement);

@@ -6,20 +6,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
-/**
- * Validator for Article entities.
- * Separates validation logic from business logic (SRP).
- */
 @Component
 @Slf4j
 public class ArticleValidator {
 
-	/**
-	 * Validates that an article has a non-empty title.
-	 * 
-	 * @param article the article to validate
-	 * @return true if article is valid, false otherwise
-	 */
 	public boolean isValid(Article article) {
 		if (article == null) {
 			log.debug("Article is null");
@@ -34,12 +24,6 @@ public class ArticleValidator {
 		return true;
 	}
 	
-	/**
-	 * Validates and returns a descriptive message if invalid.
-	 * 
-	 * @param article the article to validate
-	 * @return validation error message or null if valid
-	 */
 	public String validate(Article article) {
 		if (article == null) {
 			return "Article cannot be null";
@@ -49,7 +33,7 @@ public class ArticleValidator {
 			return "Article title cannot be null or empty";
 		}
 		
-		return null; // Valid
+		return null;
 	}
 
     public void validateInput(ArticleDTO article) {

@@ -12,24 +12,8 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Redis-based cache service with circuit breaker and bulkhead protection.
- * Implements TTL jitter to prevent cache stampede on expiration.
- * 
- * <p>Resilience patterns:
- * <ul>
- *   <li>Circuit breaker: Opens after threshold failures, prevents Redis overload</li>
- *   <li>Bulkhead: Limits concurrent Redis operations</li>
- * </ul>
- * 
- * <p>TTL jitter: Adds ±10% random variation to TTL to prevent simultaneous expiration
- * of many keys (cache stampede prevention).
- * 
- * <p>Error handling: Cache failures return error result, don't throw exceptions.
- * This allows callers to degrade gracefully (e.g., generate summary even if cache fails).
- * 
- * <p>Side effects: Redis operations (get/put/delete), metrics recording.
- * 
- * <p>Thread safety: RedisTemplate is thread-safe, operations are atomic.
+ * Redis cache with circuit breaker and bulkhead protection.
+ * Uses ±10% TTL jitter to prevent cache stampede. Returns error results instead of throwing.
  */
 @Service
 @Slf4j
@@ -51,15 +35,6 @@ public class CacheService {
         this.metrics = metrics;
     }
 
-    /**
-     * Gets value from cache. Returns miss/error result instead of throwing exceptions.
-     * 
-     * @param key cache key (null/empty returns miss)
-     * @param type expected value type
-     * @return CacheResult with hit/miss/error status
-     * 
-     * <p>Side effects: Redis GET operation, metrics recording.
-     */
     @CircuitBreaker(name = "redis", fallbackMethod = "getFallback")
     @Bulkhead(name = "redis", fallbackMethod = "getFallback")
     public <T> CacheResult<T> get(String key, Class<T> type) {
@@ -109,16 +84,6 @@ public class CacheService {
         return CacheResult.error(t);
     }
 
-    /**
-     * Puts value into cache with TTL jitter applied.
-     * Fails silently on errors (cache is optional, shouldn't break business logic).
-     * 
-     * @param key cache key (null/empty is ignored)
-     * @param value value to cache (null is ignored)
-     * @param ttlSeconds TTL in seconds (≤0 is ignored, jitter ±10% is applied)
-     * 
-     * <p>Side effects: Redis SET operation with TTL, metrics recording.
-     */
     @CircuitBreaker(name = "redis", fallbackMethod = "putFallback")
     @Bulkhead(name = "redis", fallbackMethod = "putFallback")
     public void put(String key, Object value, long ttlSeconds) {

@@ -15,9 +15,8 @@ import java.time.Duration;
 import java.util.UUID;
 
 /**
- * Service for generating and caching article summaries.
- * Implements cache-aside pattern with single-flight protection against stampede.
- * Uses Strategy pattern (SummaryProvider) for extensibility.
+ * Generates and caches article summaries.
+ * Uses cache-aside with single-flight to prevent concurrent generation of the same summary.
  */
 @Service
 @Slf4j
@@ -49,22 +48,11 @@ public class ArticleSummaryService {
         this.cacheTtl = Duration.ofHours(cacheTtlHours);
     }
 
-    /**
-     * Gets summary for an article. The article data should be provided by the caller.
-     * This method handles caching and ChatGPT generation with single-flight protection.
-     *
-     * @param articleId the article ID
-     * @param article   the article data
-     * @return the summary DTO
-     * @throws IllegalArgumentException if articleId/article invalid
-     * @throws IllegalStateException    if generated summary is empty or single-flight infrastructure is down
-     */
     public SummaryDTO getSummary(UUID articleId, ArticleDTO article) {
         validateInput(articleId, article);
 
         log.debug("Fetching summary for articleId={}", articleId);
 
-        // Cache-aside: check cache first
         String cacheKey = ArticleConstants.buildCacheKey(articleId);
         CacheResult<SummaryDTO> cached = cacheService.get(cacheKey, SummaryDTO.class);
 
@@ -81,18 +69,13 @@ public class ArticleSummaryService {
     }
 
     /**
-     * Gets summary with single-flight protection to prevent concurrent generation.
-     * Implements double-check locking: checks cache again after acquiring single-flight lock.
-     * 
-     * <p>This prevents race condition where multiple threads miss cache simultaneously
-     * and all try to generate summary concurrently.
+     * Double-checks cache after acquiring single-flight lock to prevent concurrent generation.
      */
     private SummaryDTO getSummaryWithSingleFlight(UUID articleId, ArticleDTO article, String cacheKey) {
         String singleFlightKey = ArticleConstants.buildSingleFlightKey(cacheKey);
 
         try {
             return singleFlightExecutor.execute(singleFlightKey, SummaryDTO.class, () -> {
-                // Double-check cache after acquiring lock / becoming leader
                 CacheResult<SummaryDTO> cachedAfterLock = cacheService.get(cacheKey, SummaryDTO.class);
 
                 if (cachedAfterLock instanceof CacheResult.Hit<SummaryDTO>(SummaryDTO value)) {
@@ -103,7 +86,6 @@ public class ArticleSummaryService {
                     throw new IllegalStateException("Cache unavailable, refusing to generate summary to protect provider", cause);
                 }
 
-                // Generate and cache summary
                 return generateAndCacheSummary(articleId, article, cacheKey);
             });
         } catch (Exception e) {
@@ -112,9 +94,6 @@ public class ArticleSummaryService {
         }
     }
 
-    /**
-     * Generates summary using configured SummaryProvider and caches it.
-     */
     private SummaryDTO generateAndCacheSummary(UUID articleId, ArticleDTO article, String cacheKey) {
         final String summaryText;
 
@@ -143,10 +122,7 @@ public class ArticleSummaryService {
     }
 
     /**
-     * Caches the summary with configured TTL.
-     * Fails silently if caching fails - cache is optional and shouldn't break business logic.
-     * 
-     * <p>TTL is enforced to be at least 1 hour (safety constraint).
+     * Caches summary with TTL (min 1 hour). Fails silently - cache is optional.
      */
     private void cacheSummary(String cacheKey, SummaryDTO summaryDTO) {
 
@@ -164,9 +140,6 @@ public class ArticleSummaryService {
         }
     }
 
-    /**
-     * Validates input parameters.
-     */
     private void validateInput(UUID articleId, ArticleDTO article) {
 
         if (articleId == null) {
@@ -176,7 +149,6 @@ public class ArticleSummaryService {
             throw new IllegalArgumentException("Article cannot be null");
         }
 
-        // Validate that article ID in path matches article ID in body (if present)
         if (article.getId() != null && !article.getId().equals(articleId)) {
             log.warn("Article ID mismatch: path={}, body={}", articleId, article.getId());
             throw new BusinessException(String.format("Article ID in path (%d) does not match ID in body (%d)",
