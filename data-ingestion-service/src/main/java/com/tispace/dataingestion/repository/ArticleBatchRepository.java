@@ -1,5 +1,6 @@
 package com.tispace.dataingestion.repository;
 
+import com.github.f4b6a3.uuid.UuidCreator;
 import com.tispace.dataingestion.domain.entity.Article;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,18 +12,14 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.*;
 import java.util.List;
 
-/**
- * Batch inserts articles using JDBC with ON CONFLICT DO NOTHING.
- * Processes in batches of 50. Returns count of actually inserted articles (duplicates skipped).
- */
 @Repository
 @RequiredArgsConstructor
 @Slf4j
 public class ArticleBatchRepository {
 
     private static final String INSERT_SQL =
-            "INSERT INTO articles (title, description, author, published_at, category, created_at, updated_at) " +
-                    "VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) " +
+            "INSERT INTO articles (id, title, description, author, published_at, category, created_at, updated_at) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) " +
                     "ON CONFLICT (title) DO NOTHING";
 
     private final JdbcTemplate jdbcTemplate;
@@ -31,6 +28,12 @@ public class ArticleBatchRepository {
     public int batchInsertIgnoreDuplicates(List<Article> articles) {
         if (articles == null || articles.isEmpty()) {
             return 0;
+        }
+
+        for (Article article : articles) {
+            if (article.getId() == null) {
+                article.setId(UuidCreator.getTimeOrderedEpoch());
+            }
         }
 
         final int batchSize = 50;
@@ -44,17 +47,18 @@ public class ArticleBatchRepository {
                 @Override
                 public void setValues(PreparedStatement ps, int idx) throws SQLException {
                     Article a = batch.get(idx);
-                    ps.setString(1, a.getTitle());
-                    ps.setString(2, a.getDescription());
-                    ps.setString(3, a.getAuthor());
+                    ps.setObject(1, a.getId(), Types.OTHER);
+                    ps.setString(2, a.getTitle());
+                    ps.setString(3, a.getDescription());
+                    ps.setString(4, a.getAuthor());
 
                     if (a.getPublishedAt() != null) {
-                        ps.setTimestamp(4, Timestamp.valueOf(a.getPublishedAt()));
+                        ps.setTimestamp(5, Timestamp.valueOf(a.getPublishedAt()));
                     } else {
-                        ps.setTimestamp(4, null);
+                        ps.setTimestamp(5, null);
                     }
 
-                    ps.setString(5, a.getCategory());
+                    ps.setString(6, a.getCategory());
                 }
 
                 @Override
