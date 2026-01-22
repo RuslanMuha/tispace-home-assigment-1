@@ -32,13 +32,17 @@ class ScheduledIngestionJobTest {
 	
 	private Article mockArticle;
 	private static final UUID ARTICLE_ID = UUID.fromString("01234567-89ab-7def-0123-456789abcdef");
+	private static final LocalDateTime FIXED_NOW = LocalDateTime.of(2025, 1, 15, 12, 0, 0);
 	
 	@BeforeEach
 	void setUp() {
 		mockArticle = new Article();
 		mockArticle.setId(ARTICLE_ID);
 		mockArticle.setTitle("Test Article");
-		mockArticle.setCreatedAt(LocalDateTime.now());
+		mockArticle.setCreatedAt(FIXED_NOW);
+		
+		// Set default timeout to prevent timeout issues in tests
+		org.springframework.test.util.ReflectionTestUtils.setField(scheduledIngestionJob, "jobTimeoutSeconds", 300);
 	}
 	
 	@Test
@@ -59,8 +63,8 @@ class ScheduledIngestionJobTest {
 	
 	@Test
 	void testOnApplicationReady_DataStale_RunsIngestion() {
-		// Article created 25 hours ago (stale)
-		LocalDateTime staleTime = LocalDateTime.now().minusHours(25);
+		// Article created 25 hours ago (stale) - exceeds 24h threshold
+		LocalDateTime staleTime = FIXED_NOW.minusHours(25);
 		mockArticle.setCreatedAt(staleTime);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));
@@ -79,8 +83,8 @@ class ScheduledIngestionJobTest {
 	
 	@Test
 	void testOnApplicationReady_DataFresh_SkipsIngestion() {
-		// Article created 12 hours ago (fresh)
-		LocalDateTime freshTime = LocalDateTime.now().minusHours(12);
+		// Article created 12 hours ago (fresh) - within 24h threshold
+		LocalDateTime freshTime = FIXED_NOW.minusHours(12);
 		mockArticle.setCreatedAt(freshTime);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));
@@ -93,11 +97,10 @@ class ScheduledIngestionJobTest {
 	
 	@Test
 	void testOnApplicationReady_DataExactlyAtThreshold_SkipsIngestion() {
-		// Article created exactly 24 hours ago (at threshold)
-		// Note: compareTo returns > 0 only if strictly greater, so exactly 24 hours should skip
-		// Use 23 hours to ensure it's safely less than 24 hour threshold
-		// This accounts for any timing precision issues during test execution
-		LocalDateTime thresholdTime = LocalDateTime.now().minusHours(23);
+		// Article created 23 hours ago (at threshold boundary)
+		// Note: compareTo returns > 0 only if strictly greater, so 23 hours is less than 24h threshold
+		// Using fixed time ensures consistent test behavior
+		LocalDateTime thresholdTime = FIXED_NOW.minusHours(23);
 		mockArticle.setCreatedAt(thresholdTime);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));
@@ -177,8 +180,8 @@ class ScheduledIngestionJobTest {
 	
 	@Test
 	void testOnApplicationReady_DataVeryStale_RunsIngestion() {
-		// Article created 100 hours ago (very stale)
-		LocalDateTime veryStaleTime = LocalDateTime.now().minusHours(100);
+		// Article created 100 hours ago (very stale) - exceeds 24h threshold
+		LocalDateTime veryStaleTime = FIXED_NOW.minusHours(100);
 		mockArticle.setCreatedAt(veryStaleTime);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));
@@ -197,8 +200,8 @@ class ScheduledIngestionJobTest {
 	
 	@Test
 	void testOnApplicationReady_DataJustCreated_SkipsIngestion() {
-		// Article created just now
-		mockArticle.setCreatedAt(LocalDateTime.now());
+		// Article created at fixed time (fresh) - within 24h threshold
+		mockArticle.setCreatedAt(FIXED_NOW);
 		
 		when(articleRepository.findTop1ByOrderByCreatedAtDesc()).thenReturn(Optional.of(mockArticle));
 		

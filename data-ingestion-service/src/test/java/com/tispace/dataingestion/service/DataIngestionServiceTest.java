@@ -53,10 +53,13 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", "technology"));
+		dataIngestionService.ingestData("technology", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article") &&
+			list.get(0).getCategory().equals("technology")));
 	}
 	
 	@Test
@@ -64,18 +67,20 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData(null, null));
+		dataIngestionService.ingestData(null, null);
 		
 		// Should use default values when null is passed
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article")));
 	}
 	
 	@Test
 	void testIngestData_EmptyArticles_DoesNotSave() {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(new ArrayList<>());
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", "technology"));
+		dataIngestionService.ingestData("technology", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
 		verify(articlePersistenceService, never()).saveArticles(anyList());
@@ -86,10 +91,12 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("", "technology"));
+		dataIngestionService.ingestData("", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article")));
 	}
 	
 	@Test
@@ -97,10 +104,12 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", ""));
+		dataIngestionService.ingestData("technology", "");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article")));
 	}
 	
 	@Test
@@ -109,11 +118,13 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("   ", "technology"));
+		dataIngestionService.ingestData("   ", "technology");
 		
 		// The implementation uses isNotEmpty, not isNotBlank, so whitespace is kept
 		verify(externalApiClient, times(1)).fetchArticles("   ", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article")));
 	}
 	
 	@Test
@@ -126,10 +137,13 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(articlesWithNulls);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(2);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", "technology"));
+		dataIngestionService.ingestData("technology", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> list.size() == 2));
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 2 && 
+			list.stream().noneMatch(article -> article == null) &&
+			list.stream().allMatch(article -> article.getTitle() != null && !article.getTitle().isEmpty())));
 	}
 	
 	@Test
@@ -150,10 +164,13 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(articlesWithInvalid);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", "technology"));
+		dataIngestionService.ingestData("technology", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> list.size() == 1));
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article") &&
+			list.get(0).getTitle() != null && !list.get(0).getTitle().isEmpty()));
 	}
 	
 	@Test
@@ -165,7 +182,7 @@ class DataIngestionServiceTest {
 		
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(invalidArticles);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData("technology", "technology"));
+		dataIngestionService.ingestData("technology", "technology");
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
 		verify(articlePersistenceService, never()).saveArticles(anyList());
@@ -176,10 +193,12 @@ class DataIngestionServiceTest {
 		when(externalApiClient.fetchArticles(anyString(), anyString())).thenReturn(mockArticles);
 		when(articlePersistenceService.saveArticles(anyList())).thenReturn(1);
 		
-		assertDoesNotThrow(() -> dataIngestionService.ingestData());
+		dataIngestionService.ingestData();
 		
 		verify(externalApiClient, times(1)).fetchArticles("technology", "technology");
-		verify(articlePersistenceService, times(1)).saveArticles(anyList());
+		verify(articlePersistenceService, times(1)).saveArticles(argThat(list -> 
+			list.size() == 1 && 
+			list.get(0).getTitle().equals("Test Article")));
 	}
 	
 	@Test
