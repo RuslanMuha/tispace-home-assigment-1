@@ -3,6 +3,7 @@ package com.tispace.dataingestion.controller;
 import com.tispace.common.contract.ArticleDTO;
 import com.tispace.common.contract.ErrorResponseDTO;
 import com.tispace.common.contract.SummaryDTO;
+import com.tispace.common.util.LogRateLimiter;
 import com.tispace.dataingestion.application.validation.SortStringParser;
 import com.tispace.dataingestion.client.QueryServiceClient;
 import com.tispace.dataingestion.controller.docs.ArticleApiDoc;
@@ -21,6 +22,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
@@ -30,6 +32,9 @@ import java.util.UUID;
 @RequiredArgsConstructor
 @Validated
 public class ArticleController implements ArticleApiDoc {
+	
+	private static final LogRateLimiter LOG_LIMITER = LogRateLimiter.getInstance();
+	private static final Duration RATELIMIT_LOG_WINDOW = Duration.ofSeconds(30);
 	
 	private final ArticleQueryService articleQueryService;
 	private final QueryServiceClient queryServiceClient;
@@ -94,20 +99,26 @@ public class ArticleController implements ArticleApiDoc {
 	@SuppressWarnings("unused")
     private ResponseEntity<ErrorResponseDTO> getArticlesRateLimitFallback(
             Integer page, Integer size, String sort, String category, RequestNotPermitted e) {
-        log.warn("Rate limit exceeded for getArticles. page={}, size={}", page, size);
+        if (LOG_LIMITER.shouldLog("ratelimit:articles_list", RATELIMIT_LOG_WINDOW)) {
+            log.warn("Rate limit exceeded for getArticles. page={}, size={}", page, size);
+        }
         return buildRateLimitResponse("/api/articles");
     }
 
 
 	@SuppressWarnings("unused")
     private ResponseEntity<ErrorResponseDTO> getArticleByIdRateLimitFallback(UUID id, RequestNotPermitted e) {
-        log.warn("Rate limit exceeded for getArticleById. id={}", id);
+        if (LOG_LIMITER.shouldLog("ratelimit:articles_get", RATELIMIT_LOG_WINDOW)) {
+            log.warn("Rate limit exceeded for getArticleById. id={}", id);
+        }
         return buildRateLimitResponse("/api/articles/" + id);
     }
 
 	@SuppressWarnings("unused")
     private ResponseEntity<ErrorResponseDTO> getArticleSummaryRateLimitFallback(UUID id, RequestNotPermitted e) {
-        log.warn("Rate limit exceeded for getArticleSummary. id={}", id);
+        if (LOG_LIMITER.shouldLog("ratelimit:articles_summary", RATELIMIT_LOG_WINDOW)) {
+            log.warn("Rate limit exceeded for getArticleSummary. id={}", id);
+        }
         return buildRateLimitResponse("/api/articles/" + id + "/summary");
     }
 

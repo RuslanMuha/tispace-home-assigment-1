@@ -18,7 +18,9 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Core NewsAPI client: HTTP calls, JSON parsing, article mapping.
@@ -27,6 +29,8 @@ import java.util.List;
 @Service
 @Slf4j
 public class NewsApiClientCore {
+
+    private static final int DEBUG_SAMPLE_LIMIT = 3;
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -112,13 +116,21 @@ public class NewsApiClientCore {
         if (raw == null || raw.isEmpty()) return List.of();
 
         List<Article> result = new ArrayList<>(raw.size());
+        int droppedCount = 0;
+        var reasonCounts = new LinkedHashMap<String, Integer>();
+        int debugSamples = 0;
+
         for (var r : raw) {
             if (r == null) continue;
 
             try {
                 Article article = mapper.toArticle(r);
                 if (article == null) {
-                    logDropped(r.getTitle(), "mapping returned null");
+                    droppedCount++;
+                    reasonCounts.merge("mapping returned null", 1, Integer::sum);
+                    if (debugSamples++ < DEBUG_SAMPLE_LIMIT) {
+                        log.debug("Article dropped: title={}, reason=mapping returned null", r.getTitle());
+                    }
                     metrics.onArticleDropped();
                     continue;
                 }
@@ -126,28 +138,43 @@ public class NewsApiClientCore {
                 mapper.updateCategory(article, category);
 
                 if (!validator.isValid(article)) {
-                    logDropped(article.getTitle(), "validation failed");
+                    droppedCount++;
+                    reasonCounts.merge("validation failed", 1, Integer::sum);
+                    if (debugSamples++ < DEBUG_SAMPLE_LIMIT) {
+                        log.debug("Article dropped: title={}, reason=validation failed", article.getTitle());
+                    }
                     metrics.onArticleDropped();
                     continue;
                 }
 
                 result.add(article);
             } catch (Exception e) {
-                String title = null;
-                try {
-                    title = r.getTitle();
-                } catch (Exception ignored) { /* avoid double failure */ }
-                logDropped(title, e.getMessage());
+                droppedCount++;
+                String reason = safeReason(e.getMessage());
+                reasonCounts.merge(reason, 1, Integer::sum);
+                if (debugSamples++ < DEBUG_SAMPLE_LIMIT) {
+                    String title = null;
+                    try { title = r.getTitle(); } catch (Exception ignored) { }
+                    log.debug("Article dropped: title={}, reason={}", title != null ? title : "(no title)", reason);
+                }
                 metrics.onArticleDropped();
             }
         }
+
+        if (droppedCount > 0) {
+            var topReasons = reasonCounts.entrySet().stream()
+                    .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
+                    .limit(3)
+                    .map(entry -> entry.getKey() + "=" + entry.getValue())
+                    .toList();
+            log.warn("Dropped articles during mapping/validation: count={}, topReasons={}", droppedCount, topReasons);
+        }
+
         return result;
     }
 
-    private void logDropped(String title, String reason) {
-        String safeTitle = title != null && !title.isBlank() ? title : "(no title)";
-        String safeReason = reason != null && !reason.isBlank() ? reason : "unknown";
-        if (safeReason.length() > 200) safeReason = safeReason.substring(0, 200) + "...";
-        log.warn("Article dropped during mapping/validation: title={}, reason={}", safeTitle, safeReason);
+    private static String safeReason(String reason) {
+        if (reason == null || reason.isBlank()) return "unknown";
+        return reason.length() > 200 ? reason.substring(0, 200) + "..." : reason;
     }
 }

@@ -34,7 +34,7 @@ public class RedisSingleFlightBackend implements SingleFlightRedisBackend {
             Boolean acquired = redis.opsForValue().setIfAbsent(lockKey, token, ttl);
             return Boolean.TRUE.equals(acquired) ? LockAcquireResult.ACQUIRED : LockAcquireResult.LOCKED;
         } catch (Exception e) {
-            log.warn("Failed to acquire distributed lock {}. Redis may be unavailable.", lockKey, e);
+            log.debug("Failed to acquire distributed lock {}. Redis may be unavailable.", lockKey, e);
             return LockAcquireResult.BACKEND_UNAVAILABLE;
         }
     }
@@ -44,7 +44,7 @@ public class RedisSingleFlightBackend implements SingleFlightRedisBackend {
         try {
             redis.execute(RELEASE_LOCK_SCRIPT, Collections.singletonList(lockKey), token);
         } catch (Exception e) {
-            log.warn("Failed to release lock safely. lockKey={}", lockKey, e);
+            log.debug("Failed to release lock safely. lockKey={}", lockKey, e);
         }
     }
     
@@ -61,7 +61,7 @@ public class RedisSingleFlightBackend implements SingleFlightRedisBackend {
             String json = objectMapper.writeValueAsString(envelope);
             redis.opsForValue().set(resultKey, json, ttl);
         } catch (Exception e) {
-            log.warn("Failed to store single-flight envelope for resultKey={}", resultKey, e);
+            log.debug("Failed to store single-flight envelope for resultKey={}", resultKey, e);
         }
     }
 }

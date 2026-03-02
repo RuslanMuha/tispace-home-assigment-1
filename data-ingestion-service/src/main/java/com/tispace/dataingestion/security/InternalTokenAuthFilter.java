@@ -1,5 +1,6 @@
 package com.tispace.dataingestion.security;
 
+import com.tispace.common.util.LogRateLimiter;
 import com.tispace.dataingestion.config.InternalSecurityProperties;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -17,6 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.List;
 
 @Component
@@ -27,6 +29,8 @@ public class InternalTokenAuthFilter extends OncePerRequestFilter {
     private static final String ACTUATOR_PATH_PREFIX = "/actuator/";
     private static final String ACTUATOR_HEALTH_PATH = "/actuator/health";
     private static final String ACTUATOR_INFO_PATH = "/actuator/info";
+    private static final LogRateLimiter LOG_LIMITER = LogRateLimiter.getInstance();
+    private static final Duration AUTH_LOG_WINDOW = Duration.ofSeconds(60);
 
     private final InternalSecurityProperties properties;
 
@@ -44,7 +48,10 @@ public class InternalTokenAuthFilter extends OncePerRequestFilter {
 
         String providedToken = request.getHeader(properties.getHeader());
         if (!StringUtils.hasText(providedToken)) {
-            log.warn("Missing {} header for actuator endpoint: {}", properties.getHeader(), requestPath);
+            if (LOG_LIMITER.shouldLog("auth:missing_header", AUTH_LOG_WINDOW)) {
+                log.warn("Missing auth header for actuator endpoint: {}", requestPath);
+            }
+            log.debug("Missing {} header for actuator endpoint: {}", properties.getHeader(), requestPath);
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"Unauthorized: Missing authentication header\"}");
@@ -52,7 +59,10 @@ public class InternalTokenAuthFilter extends OncePerRequestFilter {
         }
 
         if (!isTokenValid(providedToken)) {
-            log.warn("Invalid token for actuator endpoint: {}", requestPath);
+            if (LOG_LIMITER.shouldLog("auth:invalid_token", AUTH_LOG_WINDOW)) {
+                log.warn("Invalid token for actuator endpoint: {}", requestPath);
+            }
+            log.debug("Invalid token for actuator endpoint: {}", requestPath);
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             response.setContentType("application/json");
             response.getWriter().write("{\"error\":\"Forbidden: Invalid authentication token\"}");

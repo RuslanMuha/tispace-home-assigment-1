@@ -3,6 +3,7 @@ package com.tispace.queryservice.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tispace.common.exception.ExternalApiException;
 import com.tispace.queryservice.config.SingleFlightProperties;
+import com.tispace.common.util.LogRateLimiter;
 import com.tispace.queryservice.dto.SingleFlightEnvelope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +27,8 @@ public class SingleFlightService implements SingleFlightExecutor {
 
     private static final String LOCK_PREFIX = "lock:singleflight:";
     private static final String RESULT_PREFIX = "result:singleflight:";
+    private static final LogRateLimiter LOG_LIMITER = LogRateLimiter.getInstance();
+    private static final Duration REDIS_LOG_WINDOW = Duration.ofSeconds(10);
 
     private final SingleFlightRedisBackend redisBackend;
     private final ObjectMapper objectMapper;
@@ -72,14 +75,19 @@ public class SingleFlightService implements SingleFlightExecutor {
         } catch (ExternalApiException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Redis read failed for resultKey={}, fallback to in-memory single-flight", resultKey, e);
+            if (LOG_LIMITER.shouldLog("redis:read_failed_fallback", REDIS_LOG_WINDOW)) {
+                log.warn("Redis read failed for resultKey={}, fallback to in-memory: [{}] {}", resultKey, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Redis read failed for resultKey={}, fallback to in-memory single-flight", resultKey, e);
             return executeWithInMemorySingleFlight(key, operation);
         }
 
         SingleFlightRedisBackend.LockAcquireResult lockResult = redisBackend.tryAcquireLock(lockKey, token, lockTtl);
 
         if (lockResult == SingleFlightRedisBackend.LockAcquireResult.BACKEND_UNAVAILABLE) {
-            log.warn("Redis unavailable for lockKey={}, fallback to in-memory single-flight", lockKey);
+            if (LOG_LIMITER.shouldLog("redis:lock_acquire_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Redis unavailable for lockKey={}, fallback to in-memory single-flight", lockKey);
+            }
             return executeWithInMemorySingleFlight(key, operation);
         }
 
@@ -110,7 +118,10 @@ public class SingleFlightService implements SingleFlightExecutor {
         try {
             return waitForEnvelopeWithBackoff(resultKey, resultType);
         } catch (FollowerWaitFailureException waitError) {
-            log.warn("Failed waiting for resultKey={}, fallback to in-memory", resultKey, waitError);
+            if (LOG_LIMITER.shouldLog("redis:read_failed_fallback", REDIS_LOG_WINDOW)) {
+                log.warn("Failed waiting for resultKey={}, fallback to in-memory: [{}] {}", resultKey, waitError.getClass().getSimpleName(), waitError.getMessage());
+            }
+            log.debug("Failed waiting for resultKey={}, fallback to in-memory", resultKey, waitError);
             return executeWithInMemorySingleFlight(key, operation);
         }
     }

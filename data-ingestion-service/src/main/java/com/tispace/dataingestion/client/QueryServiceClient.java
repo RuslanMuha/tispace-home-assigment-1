@@ -4,6 +4,7 @@ import com.tispace.common.contract.ArticleDTO;
 import com.tispace.common.contract.SummaryDTO;
 import com.tispace.common.exception.ExternalApiException;
 import com.tispace.common.exception.RateLimitExceededException;
+import com.tispace.common.util.LogRateLimiter;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import io.github.resilience4j.ratelimiter.RequestNotPermitted;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
+import java.time.Duration;
 import java.util.UUID;
 
 /**
@@ -36,6 +38,8 @@ public class QueryServiceClient {
     private final RestTemplate queryServiceRestTemplate;
 	
 	private static final String SUMMARY_ENDPOINT = "/internal/summary";
+	private static final LogRateLimiter LOG_LIMITER = LogRateLimiter.getInstance();
+	private static final Duration CB_LOG_WINDOW = Duration.ofSeconds(10);
 	
 	@CircuitBreaker(name = "queryService", fallbackMethod = "getArticleSummaryFallback")
 	@Retry(name = "queryService")
@@ -94,8 +98,11 @@ public class QueryServiceClient {
 		}
 		
 		// For circuit breaker or connection errors, return a degraded response
-		log.error("Query-service circuit breaker is open or service unavailable. Article id: {}. Error: {}", 
-			articleId, e != null ? e.getMessage() : "Unknown error", e);
+		if (LOG_LIMITER.shouldLog("query_service:cb_open", CB_LOG_WINDOW)) {
+			log.error("Query-service circuit breaker is open or service unavailable. Article id: {}. Error: [{}] {}",
+				articleId, e != null ? e.getClass().getSimpleName() : "Unknown", e != null ? e.getMessage() : "Unknown error");
+		}
+		log.debug("Query-service CB open/unavailable. Article id: {}", articleId, e);
 		
 		return SummaryDTO.builder()
 			.articleId(articleId)

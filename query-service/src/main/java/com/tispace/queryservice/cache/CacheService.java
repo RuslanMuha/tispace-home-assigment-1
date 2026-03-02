@@ -2,12 +2,14 @@ package com.tispace.queryservice.cache;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tispace.common.util.LogRateLimiter;
 import io.github.resilience4j.bulkhead.annotation.Bulkhead;
 import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -20,6 +22,8 @@ import java.util.concurrent.TimeUnit;
 public class CacheService {
 
     private static final double TTL_JITTER_PERCENT = 0.1; // ±10%
+    private static final LogRateLimiter LOG_LIMITER = LogRateLimiter.getInstance();
+    private static final Duration REDIS_LOG_WINDOW = Duration.ofSeconds(10);
 
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper;
@@ -47,7 +51,10 @@ public class CacheService {
             return metrics.recordGet(() -> getFromCache(key, type));
         } catch (Exception e) {
             metrics.error();
-            log.warn("Cache get failed for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Cache get failed for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Cache get failed for key={}", key, e);
             return CacheResult.error(e);
         }
     }
@@ -67,12 +74,18 @@ public class CacheService {
 
         } catch (JsonProcessingException e) {
             metrics.error();
-            log.warn("Failed to deserialize cached value for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Failed to deserialize cached value for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Failed to deserialize cached value for key={}", key, e);
             return CacheResult.error(e);
 
         } catch (Exception e) {
             metrics.error();
-            log.warn("Unexpected redis/get error for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Unexpected redis/get error for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Unexpected redis/get error for key={}", key, e);
             return CacheResult.error(e);
         }
     }
@@ -80,7 +93,10 @@ public class CacheService {
     @SuppressWarnings("unused")
     public <T> CacheResult<T> getFallback(String key, Class<T> type, Throwable t) {
         metrics.unavailable();
-        log.warn("Redis get fallback triggered for key={}", key, t);
+        if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+            log.warn("Redis get fallback triggered for key={}: [{}] {}", key, t.getClass().getSimpleName(), t.getMessage());
+        }
+        log.debug("Redis get fallback triggered for key={}", key, t);
         return CacheResult.error(t);
     }
 
@@ -104,7 +120,10 @@ public class CacheService {
             metrics.recordPut(() -> putToCache(key, value, ttlSeconds));
         } catch (Exception e) {
             metrics.error();
-            log.warn("Cache put failed for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Cache put failed for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Cache put failed for key={}", key, e);
         }
     }
 
@@ -119,18 +138,27 @@ public class CacheService {
 
         } catch (JsonProcessingException e) {
             metrics.error();
-            log.warn("Failed to serialize value for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Failed to serialize value for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Failed to serialize value for key={}", key, e);
 
         } catch (Exception e) {
             metrics.error();
-            log.warn("Unexpected redis/put error for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Unexpected redis/put error for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Unexpected redis/put error for key={}", key, e);
         }
     }
 
     @SuppressWarnings("unused")
     public void putFallback(String key, Object value, long ttlSeconds, Throwable t) {
         metrics.unavailable();
-        log.warn("Redis put fallback triggered for key={}", key, t);
+        if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+            log.warn("Redis put fallback triggered for key={}: [{}] {}", key, t.getClass().getSimpleName(), t.getMessage());
+        }
+        log.debug("Redis put fallback triggered for key={}", key, t);
     }
 
     @CircuitBreaker(name = "redis", fallbackMethod = "deleteFallback")
@@ -144,14 +172,20 @@ public class CacheService {
             redisTemplate.delete(key);
         } catch (Exception e) {
             metrics.error();
-            log.warn("Unexpected redis/delete error for key={}", key, e);
+            if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+                log.warn("Unexpected redis/delete error for key={}: [{}] {}", key, e.getClass().getSimpleName(), e.getMessage());
+            }
+            log.debug("Unexpected redis/delete error for key={}", key, e);
         }
     }
 
     @SuppressWarnings("unused")
     public void deleteFallback(String key, Throwable t) {
         metrics.unavailable();
-        log.warn("Redis delete fallback triggered for key={}", key, t);
+        if (LOG_LIMITER.shouldLog("redis:cache_get_failed", REDIS_LOG_WINDOW)) {
+            log.warn("Redis delete fallback triggered for key={}: [{}] {}", key, t.getClass().getSimpleName(), t.getMessage());
+        }
+        log.debug("Redis delete fallback triggered for key={}", key, t);
     }
 
     private long addJitter(long ttlSeconds) {
